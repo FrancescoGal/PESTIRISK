@@ -1,5 +1,4 @@
-# Please for more details have a look to this page:
-# https://github.com/FrancescoGal/PESTIRISK/blob/main/Background%20PesticideBanAssessment
+
 
 # The developed procedure serves at adding three permanent crop classes to the Eu Crop Map, 
 # where they are actually not really well mapped. The resulting map is the Enriched EU Crop Map.
@@ -9,6 +8,8 @@
 
 # Buffer areas intercept the Enriched EU Crop Map. The aim of this procedure is to characterize the distribution/amount 
 # of crops falling into the intercepted areas and to extend the procedure to the whole EU.
+
+#This is not a full running model but junks of code, copied as reference for a better comprehension of the procedure
 
 # [ ] Re-project and align the three layers within the same reference coordinate system
     # in re-projecting a tile of the EU Crop Map, NO DATA acquire strange values like -10^40 to be taken into account
