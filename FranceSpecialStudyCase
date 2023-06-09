@@ -1,0 +1,1506 @@
+#load libraries that I need for the analysis
+library(RPostgreSQL)
+library(sf)
+library(tidyverse)
+library(tmap)
+library(spData)
+data(World, metro)
+
+##Create a connection with PosgreSQL (DBeaver)
+
+#################
+# FRANCE DATA: AREAs & Agricultural PARCELs
+#########################################
+drv <- dbDriver("PostgreSQL")
+connec <- dbConnect(drv,
+                    dbname = "refocus_gsaa_db",
+                    host = "jeodb01.cidsn.jrc.it",
+                    port = 54321,
+                    user = "refocus_gsaa_user_ro",
+                    password = "K2Xo5RcDPQ")
+
+#View(PPDB)
+#####################################################################################################
+##FIX the Postal codes
+
+PcodesFR <- st_read(connec, query = "SELECT * FROM pestirisk.laposte_hexasmal")
+#for each lat/lon combination there are multiple postal codes
+#group lat lon together as a unique identifier of geospatial location
+PcodesFR1 <- PcodesFR %>% 
+  mutate(conc = paste(lat, lon, sep="_")) #%>% 
+#head(PcodesFR1)
+
+#use conc = geospatial locations to group multiple postal codes from a single area and take the first postal code for each location
+#this generate a unique identifier of an area (it might be a mucipality)
+#also count the number of multiple postal codes for each area
+PcodeFRun <- PcodesFR1 %>% 
+  arrange(conc, code_postal) %>% 
+  group_by(conc) %>% 
+  summarize(new_PC=first(code_postal),freqPC=n())# 
+#head(PcodeFRun)
+#View(PcodeFRun)
+
+#get a unique table with postal codes and counts
+PcodeFRun2 <- PcodeFRun %>% 
+  arrange(new_PC) %>% 
+  group_by(new_PC) %>% 
+  summarize(freqPC=n()) 
+#View(PcodeFRun2)
+
+#get old postal codes and lat/lon locations
+PcodesFR2 <- PcodesFR1 %>% 
+  select(code_postal, conc) %>% 
+  arrange(conc, code_postal) %>% 
+  rename(oldcp=code_postal)
+#head(PcodesFR2)
+
+#merge together old and new postal codes 
+#this is the crosstable that I am going to use to assign postal codes by location in QGIS on municipality layer
+joinPC <- inner_join(PcodeFRun, PcodesFR2, by="conc") %>% 
+  separate(conc, sep="\\_", into=c("lat", "lon")) %>% 
+  group_by(new_PC, oldcp) %>% 
+  summarize()
+
+
+################################
+##joinPC <======================
+################################
+
+##con questi fai assign by location
+CP_univoci <- PcodeFRun %>% 
+  separate(conc, sep="\\_", into=c("lat", "lon")) #%>% 
+#rename(new_PC=`first(code_postal)`)
+head(CP_univoci)
+#View(CP_univoci)
+write.csv(CP_univoci, "CP_univoci.csv") #THIS IS THE CSV I WILL USE TO ASSIGN POSTAL CODES TO MUNICIPALITIES AND THEN 
+#DISSOLVE BOUNDARIES BY POST CODE TO HAVE CROPS BY POST CODES AS REPORTED INTO PESTICIDE DATA
+
+#############################################################
+#  PART on CROPs
+####################################################
+# This is the resulting layer starting assigning CP_univoci.csv to Municipalities, dissolving municipality polygons per postal codes, 
+# assigning all parcels to a singol postal codes, and dissolving them per postal codes summing up the areas
+
+FRd18 <- st_read(connec, query = "SELECT * FROM pestirisk.dissolve_crops2")
+FRd18 <- FRd18 %>% 
+  rename(code_postal_acheteur=new_pc) %>% 
+  mutate(code_postal_acheteur=as.integer(code_postal_acheteur))
+head(FRd18)
+#View(FRd18)
+
+#######################################################################################################
+
+#############################################
+# IMPORTO I DATI DELLE VENDITE DELLE AS per la FRANCIA PER il 2018
+############################################
+
+setwd("/eos/jeodpp/home/users/galifra/data/FranceData")
+
+#create a dataframe which reads from eos folder file list
+df <-
+  list.files(path = "/eos/jeodpp/home/users/galifra/data/FranceData", pattern = "*.csv")# %>% 
+
+#upload files from the list and assign them to variables 
+#!!! pay attention to the names in the folder, df[x] depends on the position of the file in the list
+AUVERGNE_RHONE_ALPES <- read.csv(df[1], sep=";", header=T)
+BOURGOGNE_FRANCHE_COMTE <- read.csv(df[2], sep=";", header=T)
+BRETAGNE <- read.csv(df[3], sep=";", header=T)
+CENTRE_VAL_DE_LOIRE <- read.csv(df[4], sep=";", header=T)
+CORSE <- read.csv(df[5], sep=";", header=T)
+GRAND_EST <- read.csv(df[6], sep=";", header=T)
+GUADELOUPE <- read.csv(df[7], sep=";", header=T)
+GUYANE <- read.csv(df[8], sep=";", header=T)
+HAUTS_DE_FRANCE <- read.csv(df[9], sep=";", header=T)
+ILE_DE_FRANCE <- read.csv(df[10], sep=";", header=T)
+INDETERMINE <- read.csv(df[11], sep=";", header=T)
+LA_REUNION <- read.csv(df[12], sep=";", header=T)
+MARTINIQUE <- read.csv(df[13], sep=";", header=T)
+MAYOTTE <- read.csv(df[14], sep=";", header=T)
+NORMANDIE <- read.csv(df[15], sep=";", header=T)
+NOUVELLE_AQUITAINE <- read.csv(df[16], sep=";", header=T)
+OCCITANIE <- read.csv(df[17], sep=";", header=T)
+PAYS_DE_LA_LOIRE <- read.csv(df[18], sep=";", header=T)
+PROVENCE_ALPES_COTE_DAZUR <- read.csv(df[19], sep=";", header=T)
+head(PAYS_DE_LA_LOIRE)
+
+#Create a unique file from different csv
+FR_AS <- rbind(AUVERGNE_RHONE_ALPES, BOURGOGNE_FRANCHE_COMTE, BRETAGNE, CENTRE_VAL_DE_LOIRE, CORSE, GRAND_EST,
+               GUADELOUPE, GUYANE, HAUTS_DE_FRANCE, ILE_DE_FRANCE, INDETERMINE, 
+               LA_REUNION, MARTINIQUE, MAYOTTE, NORMANDIE,NOUVELLE_AQUITAINE,
+               OCCITANIE, PAYS_DE_LA_LOIRE, PROVENCE_ALPES_COTE_DAZUR)
+#remove single files from memory
+rm(AUVERGNE_RHONE_ALPES, BOURGOGNE_FRANCHE_COMTE, BRETAGNE, CENTRE_VAL_DE_LOIRE, CORSE, GRAND_EST,
+   GUADELOUPE, GUYANE, HAUTS_DE_FRANCE, ILE_DE_FRANCE, INDETERMINE, 
+   LA_REUNION, MARTINIQUE, MAYOTTE, NORMANDIE,NOUVELLE_AQUITAINE,
+   OCCITANIE, PAYS_DE_LA_LOIRE, PROVENCE_ALPES_COTE_DAZUR)
+#View(FR_AS)
+head(FR_AS)
+FR_ASas1 <- FR_AS %>% #before data curation
+  mutate(quantite_substance=as.numeric(quantite_substance)) %>%
+  filter(!is.na(quantite_substance)) %>% 
+  group_by(substance) %>% 
+  summarize(quantite_substance=sum(quantite_substance))
+sum(FR_ASas1$quantite_substance)
+506-482
+
+FR_AS <-FR_AS %>%
+  mutate(quantite_substance=as.numeric(quantite_substance)) %>% 
+  group_by(annee, code_postal_acheteur, amm, substance, cas, classification) %>% 
+  summarize(quantite_substance=sum(quantite_substance))
+FR_AS <-FR_AS %>% 
+  filter(code_postal_acheteur!=0)
+
+FR_AS <-FR_AS %>% 
+  filter(!is.na(quantite_substance))
+FR_AS <-FR_AS %>% 
+  filter(quantite_substance>0)
+head(FR_AS)
+
+FR_ASas2 <- FR_AS %>% #before data curation
+  mutate(quantite_substance=as.numeric(quantite_substance)) %>%
+  filter(!is.na(quantite_substance)) %>% 
+  group_by(substance) %>% 
+  summarize(quantite_substance=sum(quantite_substance))
+sum(FR_ASas2$quantite_substance)
+(sum(FR_ASas1$quantite_substance) - sum(FR_ASas2$quantite_substance))/sum(FR_ASas1$quantite_substance)*100
+
+
+#provams <- filter(FR_AS, substance == "metam-sodium")
+#provams2 <- provams %>% 
+#  group_by(code_postal_acheteur) %>% 
+#  summarize()
+#provams3 <- left_join(provams2, dataFR1, by="code_postal_acheteur")
+#view(provams3)
+
+###############################################
+### IMPORTO I DATI DELLE VENDITE DEi PPP per la FRANCIA PER il 2018
+##############################################
+
+
+setwd("/eos/jeodpp/home/users/galifra/data/FranceDataPPP")
+
+df2 <-
+  list.files(path = "/eos/jeodpp/home/users/galifra/data/FranceDataPPP", pattern = "*.csv")# %>% 
+
+pAUVERGNE_RHONE_ALPES <- read.csv(df2[1], sep=";", header=T)
+pBOURGOGNE_FRANCHE_COMTE <- read.csv(df2[2], sep=";", header=T)
+pBRETAGNE <- read.csv(df2[3], sep=";", header=T)
+pCENTRE_VAL_DE_LOIRE <- read.csv(df2[4], sep=";", header=T)
+pCORSE <- read.csv(df2[5], sep=";", header=T)
+pGRAND_EST <- read.csv(df2[6], sep=";", header=T)
+pGUADELOUPE <- read.csv(df2[7], sep=";", header=T)
+pGUYANE <- read.csv(df2[8], sep=";", header=T)
+pHAUTS_DE_FRANCE <- read.csv(df2[9], sep=";", header=T)
+pILE_DE_FRANCE <- read.csv(df2[10], sep=";", header=T)
+pINDETERMINE <- read.csv(df2[11], sep=";", header=T)
+pLA_REUNION <- read.csv(df2[12], sep=";", header=T)
+pMARTINIQUE <- read.csv(df2[13], sep=";", header=T)
+pMAYOTTE <- read.csv(df2[14], sep=";", header=T)
+pNORMANDIE <- read.csv(df2[15], sep=";", header=T)
+pNOUVELLE_AQUITAINE <- read.csv(df2[16], sep=";", header=T)
+pOCCITANIE <- read.csv(df2[17], sep=";", header=T)
+pPAYS_DE_LA_LOIRE <- read.csv(df2[18], sep=";", header=T)
+pPROVENCE_ALPES_COTE_DAZUR <- read.csv(df2[19], sep=";", header=T)
+#head(pAUVERGNE_RHONE_ALPES)
+#creo un unico file con tutti i miei csv
+pFR_AS <- rbind(pAUVERGNE_RHONE_ALPES, pBOURGOGNE_FRANCHE_COMTE, pBRETAGNE, pCENTRE_VAL_DE_LOIRE, pCORSE, pGRAND_EST,
+                pGUADELOUPE, pGUYANE, pHAUTS_DE_FRANCE, pILE_DE_FRANCE, pINDETERMINE, 
+                pLA_REUNION, pMARTINIQUE, pMAYOTTE, pNORMANDIE, pNOUVELLE_AQUITAINE,
+                pOCCITANIE, pPAYS_DE_LA_LOIRE, pPROVENCE_ALPES_COTE_DAZUR)
+
+rm(pAUVERGNE_RHONE_ALPES, pBOURGOGNE_FRANCHE_COMTE, pBRETAGNE, pCENTRE_VAL_DE_LOIRE, pCORSE, pGRAND_EST,
+   pGUADELOUPE, pGUYANE, pHAUTS_DE_FRANCE, pILE_DE_FRANCE, pINDETERMINE, 
+   pLA_REUNION, pMARTINIQUE, pMAYOTTE, pNORMANDIE, pNOUVELLE_AQUITAINE,
+   pOCCITANIE, pPAYS_DE_LA_LOIRE, pPROVENCE_ALPES_COTE_DAZUR)
+
+#View(pFR_AS)
+#nrow(pFR_AS)
+#head(pFR_AS)
+
+pFR_AS <-pFR_AS %>% 
+  mutate(kg_PPP= as.numeric(quantite_produit), mu=conditionnement) %>% 
+  group_by(annee, code_postal_acheteur, amm, mu) %>% 
+  summarize(kg_PPP=sum(kg_PPP))
+pFR_AS <-pFR_AS %>% 
+  filter(code_postal_acheteur!=0)
+
+pFR_AS <-pFR_AS %>% 
+  filter(!is.na(kg_PPP))
+pFR_AS <-pFR_AS %>% 
+  filter(kg_PPP>0)
+##PPPPestProd <- pFR_AS %>% #2746 prodotti venduti
+##  group_by(amm) %>% 
+##  summarize(cont=n())
+##
+##write.csv(PPPPestProd, "PestPPP.csv")
+
+############################
+# unisco i dati per AS e PPP in un unico layer e calcolo il contenuto di AS nei PPP
+#pppFR_AS <- left_join(FR_AS_num, pFR_AS_num, by=c("amm", "code_postal_acheteur")) 
+pppFR_AS <- left_join(FR_AS, pFR_AS, by=c("amm", "code_postal_acheteur")) 
+
+
+pppFR_AS <- pppFR_AS %>% 
+  mutate(AScont = round(quantite_substance/kg_PPP, digits=5) ) %>% 
+  mutate(AScont=round(AScont, digits=3)) %>% 
+  select(-annee.y)
+head(pppFR_AS)
+pppFR_AS <- pppFR_AS %>% 
+  rename(Q_PPP = kg_PPP, muPPP=mu, annee= annee.x) 
+
+head(pppFR_AS)
+
+#FR_ASas3 <- pppFR_AS %>% #before data curation
+#  mutate(quantite_substance=as.numeric(quantite_substance)) %>%
+#  filter(!is.na(quantite_substance)) %>% 
+#  group_by(substance) %>% 
+#  summarize(quantite_substance=sum(quantite_substance))
+#sum(FR_ASas3$quantite_substance)
+#(sum(FR_ASas1$quantite_substance) - sum(FR_ASas3$quantite_substance))/sum(FR_ASas1$quantite_substance)*100
+
+
+#sostituisco il valore di cas 1332-40-7 corrispondente alla stessa voce di substance
+pppFR_AS$cas[pppFR_AS$cas == "1332-65-6"] <- "1332-40-7"
+pppFR_AS$cas[pppFR_AS$cas == "39300-45-3"] <- "131-72-6"
+#Group by substance and cas and count them
+FR_AS_subs <- pppFR_AS %>% 
+  group_by(substance, cas) %>% 
+  summarise(n())
+#scrivo in un csv per controlli
+#write.csv(FR_AS_subs, "FR_AS_Asubs.csv")
+
+#re-group to count multiple cas
+FR_AS_subs2 <- FR_AS_subs %>%
+  select(substance,cas) %>% 
+  group_by(substance,cas) %>%
+  summarize(n())
+#View(FR_AS_subs2)
+#upload Pesticide properties database names in English
+setwd("/eos/jeodpp/home/users/galifra/data/FranceData")
+PPDB <- read.csv("PPDB_EUData.csv", sep=",", header = T)
+
+#work with names to provide only english terminology
+#select the most common used active substance name
+PPDB <- PPDB %>% 
+  select(Active, cas) %>% 
+  group_by(cas) %>% 
+  summarize(Active=first(Active), con=n())
+#View(PPDB)
+EN_names <- left_join(FR_AS_subs2, PPDB, by="cas")
+
+#View(EN_names)
+#from cas number to unique english name
+EN_names$Active[EN_names$cas == "86252-65-5"] <- "2,13-octadecadienyl acetate"
+EN_names$Active[EN_names$cas == "462-94-2"] <- "1,5-Diaminopentane"
+EN_names$Active[EN_names$cas == "2650-18-2"] <- "Acid Blue 9"
+EN_names$Active[EN_names$cas == "334-48-5"] <- "Decanoic acid"
+EN_names$Active[EN_names$cas == "79-14-1"] <- "hydroxyacetic acid"
+EN_names$Active[EN_names$cas == "124-07-2"] <- "Octanoic Acid"
+EN_names$Active[EN_names$cas == "110-44-1"] <- "Sorbic Acid"
+EN_names$Active[EN_names$cas == "5329-14-6"] <- "Sulfamic Acid"
+EN_names$Active[EN_names$cas == "61827-42-7"] <- "Polyoxyethylene isodecyl ether"
+EN_names$Active[EN_names$cas == "67-63-0"] <- "Isopropanol"
+EN_names$Active[EN_names$cas == "67891-88-7"] <- "Aureobasidium Pullulans"
+EN_names$Active[EN_names$cas == "68038-70-0"] <- "bacillus subtilis" 
+EN_names$Active[EN_names$cas == "63428-82-0"] <- "Beauveria bassiana"
+EN_names$Active[EN_names$cas == "68424-85-1"] <- "tetradecyldimethylbenzammonium chloride"
+EN_names$Active[EN_names$cas == "27083-27-8"] <- "Poly(hexamethylenebicyanoguanide-hexamethylenediamine) Hydrochloride"
+EN_names$Active[EN_names$cas == "8050-09-7"] <- "Colophonium"
+EN_names$Active[EN_names$cas == "95-48-7"] <- "2-Methylphenol"
+EN_names$Active[EN_names$cas == "2300-66-5"] <- "Dicamba-Dimethylammonium"
+EN_names$Active[EN_names$cas == "63148-62-9"] <- "OCTAMETHYLTRISILOXANE"
+EN_names$Active[EN_names$cas == "39300-45-3"] <- "Meptyldinocap"
+EN_names$Active[EN_names$cas == "37338-40-2"] <- "8-Dodecenyl acetate"
+EN_names$Active[EN_names$cas == "133855-98-8"] <- "Epoxiconazole"
+EN_names$Active[EN_names$cas == "61788-59-8"] <- "METHYL TRIDECANOATE"
+EN_names$Active[EN_names$cas == "8008-99-9"] <- "Diallyl trisulfide"
+EN_names$Active[EN_names$cas == "72490-01-8"] <- "FENOXYCARB"
+EN_names$Active[EN_names$cas == "540-69-2"] <- "AMMONIUM FORMATE"
+EN_names$Active[EN_names$cas == "8030-53-3"] <- "Gibberellin A4 mixture with Gibberellin A7"
+EN_names$Active[EN_names$cas == "8011-48-1"] <- "Pine Tar"
+EN_names$Active[EN_names$cas == "102-71-6"] <- "TRIETHANOLAMINE"
+EN_names$Active[EN_names$cas == "27306-78-1"] <- "Polyalkyleneoxide modified heptamethyltrisiloxane"
+EN_names$Active[EN_names$cas == "9206-23-56"] <- "White mineral oil"
+EN_names$Active[EN_names$cas == "85586-25-0"] <- "Fatty acids, rape-oil, Me esters"
+EN_names$Active[EN_names$cas == "64742-55-8"] <- "Mineral oil, petroleum distillates, hydrotreated light paraffinic"
+EN_names$Active[EN_names$cas == "8050-18-8"] <- "Rosin, decarboxylated"
+EN_names$Active[EN_names$cas == "8001-79-4"] <- "CASTOR OIL"
+EN_names$Active[EN_names$cas == "1310-73-2"] <- "SODIUM HYDROXIDE"
+EN_names$Active[EN_names$cas == "52831-07-9"] <- "Butanedioic acid"
+EN_names$Active[EN_names$cas == "8002-43-5"] <- "Soybean lecithin"
+EN_names$Active[EN_names$cas == "67-56-1"] <- "Methanol"
+EN_names$Active[EN_names$cas == "629-70-9"] <- "Hexadecyl Acetate"
+EN_names$Active[EN_names$cas == "2372-82-9"] <- "Laurylamine dipropylenediamine"
+EN_names$Active[EN_names$cas == "10022-31-8"] <- "BARIUM NITRATE"
+EN_names$Active[EN_names$cas == "8002-74-2"] <- "Paraffin Wax"
+EN_names$Active[EN_names$cas == "526-18-1"] <- "Oxaphenamide"
+EN_names$Active[EN_names$cas == "70693-62-8"] <- "Potassium Hydrogen Peroxymonosulfate"
+EN_names$Active[EN_names$cas == "13492-26-7"] <- "Dipotassium Phosphite"
+EN_names$Active[EN_names$cas == "61789-60-4"] <- "Pitch"
+EN_names$Active[EN_names$cas == "32289-58-0"] <- "Poly(hexamethylenediguanide) Hydrochloride"
+EN_names$Active[EN_names$cas == "115-11-7"] <- "ISOBUTYLENE"
+EN_names$Active[EN_names$cas == "8061-53-8"] <- "Ammonium Ligninsulfonate"
+EN_names$Active[EN_names$cas == "9016-72-2"] <- "Propineb"
+EN_names$Active[EN_names$cas == "17496-08-1"] <- "Ammonium Propionate"
+EN_names$Active[EN_names$cas == "10124-65-9"] <- "Potassium Laurate"
+EN_names$Active[EN_names$cas == "24634-61-5"] <- "POTASSIUM SORBATE"
+EN_names$Active[EN_names$cas == "61789-97-7"] <- "Beef tallow"
+EN_names$Active[EN_names$cas == "7782-63-0"] <- "Ferrous sulfate heptahydrate"
+EN_names$Active[EN_names$cas == "8006-64-2"] <- "TRIETHYL CITRATE"
+EN_names$Active[EN_names$Active == "Meptyldinocap"] <- "meptyldinocap"
+#put new names where available to the name column and join the original dataset
+EN_names2 <- EN_names %>% 
+  mutate(Active=ifelse(is.na(Active), substance, Active))
+
+FR_AS_fin <- left_join(pppFR_AS, EN_names2, by="substance")
+#View(FR_AS_fin)
+
+FR_AS_numb<- FR_AS_fin%>% 
+  filter(!is.na(quantite_substance))
+#View(checkCS4)
+head(FR_AS_numb)
+
+FR_AS_num <- FR_AS_numb %>% 
+  select(annee, code_postal_acheteur,amm, classification, Active, quantite_substance, cas.y,Q_PPP, muPPP, AScont ) %>% 
+  rename(cas=cas.y) %>% 
+  group_by(annee, code_postal_acheteur,amm, classification, Active, cas, muPPP, AScont) %>% 
+  summarize(quantite_substance=sum(quantite_substance), Q_PPP=sum(Q_PPP))
+#free memory
+rm(FR_AS_numb, FR_AS_fin)
+
+#fix some multiple postal codes for Paris, Marseilles and Nice and only take quantities greater than 0
+
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75002] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75003] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75004] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75005] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75006] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75007] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75008] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75009] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75010] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75011] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75012] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75013] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75014] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75015] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75016] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75017] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75018] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 75019] <- 75001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 69002] <- 69001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 69003] <- 69001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 69004] <- 69001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 69005] <- 69001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 69006] <- 69001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 69007] <- 69001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 69008] <- 69001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 69009] <- 69001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 13002] <- 13001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 13003] <- 13001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 13004] <- 13001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 13005] <- 13001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 13006] <- 13001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 13007] <- 13001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 13008] <- 13001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 13009] <- 13001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 13010] <- 13001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 13011] <- 13001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 13012] <- 13001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 13013] <- 13001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 13014] <- 13001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 13015] <- 13001
+FR_AS_num$code_postal_acheteur[FR_AS_num$code_postal_acheteur == 13016] <- 13001
+head(FR_AS_num)
+FR_AS_num <- FR_AS_num %>% #
+  group_by(annee, code_postal_acheteur, amm, classification, Active, cas,muPPP, AScont) %>% 
+  summarize(quantite_substance=sum(quantite_substance), Q_PPP= sum(Q_PPP))
+
+PcodeFRun0 <- PcodeFRun2 %>% 
+  rename(code_postal_acheteur= new_PC)
+joinPC <- joinPC %>% 
+  rename(code_postal_acheteur= oldcp)
+FR_AS_numPC0 <- FR_AS_num %>% 
+  filter(code_postal_acheteur==0)
+
+FR_AS_num <- FR_AS_num %>% 
+  filter(code_postal_acheteur>0)
+
+  #associo i dati del postal code sistemato con quelli dei dati di vendita.
+FR_AS_numf1 <- left_join(FR_AS_num,PcodeFRun0, by="code_postal_acheteur" ) %>% 
+  arrange(freqPC)
+
+#questi sono quelli a posto, cio quelli dove ho una relazione diretta con la tabella PcodeFRun0
+FR_AS_numf0 <- FR_AS_numf1 %>% ###<===== questo +
+  filter(!is.na(freqPC))
+
+#questi invece sono quelli per i quali devo sistemare i dati tramite joinPC
+FR_AS_numf2 <- FR_AS_numf1 %>% 
+  filter(is.na(freqPC))
+
+#conto di quanti pc stiamo parlando
+FR_AS_numf3 <- FR_AS_numf2 %>% 
+  group_by(code_postal_acheteur) %>% 
+  summarize(co=n())
+head(joinPC)
+#controllo che non ci siano duplicati e se li trovo li rimuovo
+#View(FR_AS_numf3)
+trovaPC <- left_join(FR_AS_numf3, joinPC, by="code_postal_acheteur")
+trovaPC <- trovaPC %>% 
+  subset(code_postal_acheteur != 49450 | new_PC !=49110)
+
+#rinomino la vecchia dicitura dei pc con quella nuova
+FR_AS_numf21 <- left_join(FR_AS_numf2, trovaPC, by="code_postal_acheteur") 
+head(FR_AS_numf21)
+FR_AS_numf21 <- FR_AS_numf21 %>% ###<===== questo sistemato
+  mutate(code_postal_acheteur=new_PC) %>% 
+  select(-new_PC, -co)
+#ricreo la tabella di partenza
+FR_AS_num_ <- rbind(FR_AS_numf0, FR_AS_numf21) 
+
+rm(FR_AS_numf0, FR_AS_numf1, FR_AS_numf2, FR_AS_numf21, FR_AS_numf3, trovaPC)
+#sommo laddove ho tutti i campi uguali dato che il post code  cambiato
+FR_AS_num <- FR_AS_num_ %>% 
+  select(-freqPC) %>% 
+  group_by(annee, code_postal_acheteur, amm,classification, cas,Active, muPPP, AScont) %>% #achat_etranger, 
+  summarize(quantite_substance=sum(quantite_substance), Q_PPP=sum(Q_PPP))
+
+
+setwd("/eos/jeodpp/home/users/galifra/data")
+alt_amm <- read.csv("alt_amm.csv", sep=",", header=T) %>% 
+  mutate(amm=as.character(amm))#sistemare con questi gli amm dei file
+#si passa dal numero dei permessi al numero di registrazione dei prodotti.
+FR_AS_alt <- left_join(FR_AS_num, alt_amm, by="amm") %>% 
+  mutate(amm=alt_amm) %>% 
+  select(-alt_amm) %>% 
+  group_by(annee, code_postal_acheteur, amm,classification, cas,Active, muPPP, AScont) %>% #achat_etranger, 
+  summarize(quantite_substance=sum(quantite_substance), Q_PPP=sum(Q_PPP))
+FR_PPP <- FR_AS_alt
+head(FR_PPP)
+
+#FR_PPPpc0 <- FR_AS_numPC0 %>% 
+#  mutate(amm=as.integer(amm))
+#head(FR_PPPpc0)
+
+#FR_PPP <- rbind(FR_PPP, FR_PPPpc0)
+#View(FR_AS_alt) 
+#View(FR_AS_num)
+#rm(FR_PPPpc0)
+####check volumes
+###ChkVol <- FR_AS_alt %>% 
+###  group_by(annee) %>% 
+###  summarize(quantite_substance=sum(quantite_substance))
+###ChkVol_ASdwn <- FR_AS %>% 
+###  filter(code_postal_acheteur>0) %>% 
+###  filter(quantite_substance>0) %>% 
+###  filter(!is.na(quantite_substance)) %>% 
+###  group_by(annee) %>% 
+###  summarize(quantite_substance=sum(quantite_substance))
+###ChkVol-ChkVol_ASdwn
+
+#################################
+### ESEMPIO DI TROYES dove non ci sono campi ma le vendite sono a 3468kg di AS
+
+filter(FR_AS_num, code_postal_acheteur==10000) %>% 
+  group_by(code_postal_acheteur) %>% 
+  summarise(sum(quantite_substance))
+
+##########################################
+#write_csv(FR_PPP, "FR_PPP.csv")
+
+#FR_PPP <- read.csv("FR_PPP.csv", sep=",", header=T, fileEncoding="UTF-8")  ###CARICA QUESTO SE VUOI SALTARE TUTTO PRIMA
+#head(FR_PPP)
+#FR_PPPas <- FR_PPP %>% 
+#  group_by(Active, amm) %>% 
+#  summarize(Qas = sum(quantite_substance))
+#FR_PPPas <- FR_PPPas %>% 
+#  group_by(Active) %>% 
+#  summarize(freq=n())
+#head(FR_PPPas)
+#
+##word cloud tentative
+#head(demoFreq) 
+#library(wordcloud2)
+#FR_PPPas$freq[FR_PPPas$Active=="glyphosate"] <- 54
+#FR_PPPas <- FR_PPPas %>% 
+#  rename(word=Active)
+#filter(FR_PPPas, Active=="glyphosate")
+#
+#wordcloud2(FR_PPPas, color ="random-light", backgroundColor ="white")
+#view(FR_PPPas)
+######
+
+
+FR_PPP$cas[FR_PPP$cas == "39300-45-3"] <- "131-72-6"
+FR_PPP$Active[FR_PPP$Active == "Meptyldinocap"] <- "meptyldinocap"
+
+elencoPPP <- FR_PPP %>% 
+  group_by(amm) %>% 
+  summarize()
+
+# creo delle tabelle pivot per vedere se  tutto a posto
+# tabella PPP vs subs con soma quantita'
+#Sub <- "S-metolachlor"
+
+#lista delle sostanze attive
+AS_num <- FR_PPP %>% 
+  select(Active, cas, quantite_substance) %>% 
+  group_by(Active, cas) %>% 
+  summarize(kg=sum(quantite_substance))
+write.csv(AS_num, "ASdataFR.csv")
+
+#head(FR_AS_num, 100)
+#View(FR_AS_num)
+test_piv<-pivot_wider(FR_PPP,
+                      id_cols="amm",#("amm","code_postal_acheteur"),
+                      names_from="Active",
+                      values_from = "quantite_substance",
+                      values_fn =sum)
+
+# tabella sostanze vs codice postale
+
+test_pivPC<-pivot_wider(FR_PPP,
+                        id_cols="code_postal_acheteur",#("amm","code_postal_acheteur"),
+                        names_from="Active",
+                        values_from = "quantite_substance",
+                        values_fn =sum)
+
+#PestASPPP <- FR_AS_num %>% 
+#  group_by(amm) %>% 
+#  summarize(cont=n(), totkg=sum(quantite_substance))  #2711 PPP da AS vendute
+#
+#write.csv(PestASPPP, "elencoPPPdaAS.csv")
+
+##################################
+## tabella dei prodotti francesi con tutte le varie caratteristiche associate manca associazione PPP<->AS, la prendo dai dati sulle vendite  
+##############################
+setwd("/eos/jeodpp/home/users/galifra/data/FranceData")
+nUseFR <- read.csv("produits_usages_utf8.csv", sep=";", header=T)
+nUseFR<-nUseFR %>% 
+  separate(identifiant.usage, sep="\\*", into=c("Use1", "USe2", "Use3"))
+
+nUseFR$numero.AMM[nUseFR$numero.AMM==" 2090141"] <- "2090141"
+head(nUseFR)
+
+#prod_FR <- read.csv("produits_utf8.csv", sep=";", header=T, fileEncoding="UTF-8")
+
+#head(prod_FR)
+#prod_FR$numero.AMM[prod_FR$numero.AMM==" 2090141"] <- "2090141"
+
+#form_FR <- prod_FR %>% 
+#  group_by(numero.AMM, formulations) %>% 
+#    summarise() %>% 
+#    rename(amm = numero.AMM) %>% 
+#  mutate(amm = as.numeric(amm))
+#
+##traduci dal francese all'inglese
+#head(form_FR)
+#FR_PPP1 <- left_join(FR_PPP, form_FR, by="amm")
+#FR_PPP1c <- FR_PPP1 %>% 
+#  group_by(amm, formulations) %>% 
+#  summarise()
+#
+#write.csv(FR_PPP1c, "formulation_fr.csv")
+form_EN <- read.csv("formulations_EN.csv", sep=",", header=T, na.strings = "<NA>")
+
+form_EN <- form_EN %>% 
+  select(amm, EN_form, Code, Group)
+
+head(form_EN)
+head(FR_PPP)
+
+FR_PPP <- FR_PPP %>% 
+  group_by(annee, code_postal_acheteur, amm, classification, cas,Active, AScont,muPPP ) %>% 
+  summarize(quantite_substance=sum(quantite_substance), Q_PPP= sum(Q_PPP))
+
+FR_PPP <- left_join(FR_PPP, form_EN, by="amm")
+#pppFR_AS$cas[pppFR_AS$cas == "39300-45-3"] <- "131-72-6"
+
+expvars <- read.csv("expvarAoel.csv", sep=",", header=T)
+expvars <- expvars %>% 
+  group_by(Active, MW, type, VapPres_mPa, AOEL, AAOEL, MU, AM_type) %>% 
+  summarize()
+FR_PPP <- left_join(FR_PPP, expvars, by="Active")
+
+  ##
+##CEmp <- nUseFR %>% 
+##  filter(Use1=="Traitements généraux") %>% 
+##  group_by(condition.emploi) %>% 
+##  summarize() %>% 
+##  mutate(ID = row_number())
+##write_csv(CEmp, "cond_utiltg.csv") #sistemata la traduzione, devo fare l'associazione con le crop da etichetta
+##
+##CEmp2 <- nUseFR %>% 
+##  filter(!is.na(condition.emploi)) %>% 
+##  group_by(condition.emploi, Use1, numero.AMM) %>% 
+##  summarize() %>% 
+##  mutate(ID = row_number())
+##write_csv(CEmp2, "cond_utilusenn2.csv") #consiglio di usare la parola "uniquement" per distinguere i trattamenti multipli su singole crops
+##View(CEmp2)
+##PestProd <- nUseFR %>% 
+##  group_by(numero.AMM) %>% 
+##  summarize(cont=n()) %>% 
+##  rename(amm=numero.AMM)   ##13453 PPP 
+##str(PestProd)  
+##str(PestASPPP)
+##
+##PestASProd <- left_join(PestProd, PestASPPP, by="amm") 
+##PestASProdnn <- PestASProd %>% 
+##  filter(!is.na(totkg))  
+##
+##checkPPPnotfound <- left_join(PestASPPP, PestASProdnn, by="amm")
+##checkPPPnotfoundnull <- checkPPPnotfound %>% ##mancano 570 PPP da agganciare
+##  filter(is.na(totkg.y))
+##
+##View(checkPPPnotfoundnull)
+
+##questo  il file che riassume tutti gli usi possibili per diversi tipi di trattamento, per pest e crop
+nUseFR_PPP <- nUseFR %>% 
+  drop_na(dose.retenue) %>% 
+  select(Use1, numero.AMM, dose.retenue, dose.retenue.unite, nombre.max.d.application,stade.cultural.min..BBCH.,tade.cultural.max..BBCH., USe2, Use3)%>% 
+  rename(amm=numero.AMM, Napp= nombre.max.d.application, minBBCH= stade.cultural.min..BBCH., maxBBCH=tade.cultural.max..BBCH.) %>% 
+  group_by(amm, Use1, USe2, Use3, dose.retenue.unite, dose.retenue, Napp, minBBCH, maxBBCH ) %>% 
+  summarize()
+
+head(nUseFR_PPP)
+
+##questo tiene conto anche delle condizioni di utilizzo.. che per  discorsivo..
+nUseFR_PPPCondEmp <- nUseFR %>% 
+  drop_na(dose.retenue) %>% 
+  select(Use1, numero.AMM, dose.retenue, dose.retenue.unite, nombre.max.d.application,stade.cultural.min..BBCH.,tade.cultural.max..BBCH., USe2, Use3, condition.emploi)%>% 
+  rename(amm=numero.AMM, Napp= nombre.max.d.application, minBBCH= stade.cultural.min..BBCH., maxBBCH=tade.cultural.max..BBCH.) %>% 
+  group_by(amm, Use1, USe2, Use3, dose.retenue.unite, dose.retenue, Napp, minBBCH, maxBBCH,condition.emploi ) %>% 
+  summarize()
+#View(nUseFR_PPPCondEmp)
+##questo invece non considera il tipo di trattamenton il pest e prende la dose massima consentita.
+nUseFR_PPP1x <- nUseFR %>%
+  drop_na(dose.retenue) %>% 
+  select(Use1, numero.AMM, dose.retenue, dose.retenue.unite, nombre.max.d.application,stade.cultural.min..BBCH.,tade.cultural.max..BBCH.)%>% 
+  rename(amm=numero.AMM, Napp= nombre.max.d.application, minBBCH= stade.cultural.min..BBCH., maxBBCH=tade.cultural.max..BBCH.) %>% 
+  group_by(amm, Use1, dose.retenue.unite, Napp, minBBCH, maxBBCH ) %>% 
+  summarize(dose.retenue=max(dose.retenue))
+head(nUseFR_PPP1x)
+##questo invece considera solo la crop autorizzata <===== IN USO
+
+nUseFR_PPP1 <- nUseFR %>%
+  drop_na(dose.retenue) %>% 
+  select(Use1, numero.AMM)%>% 
+  #select(Use1, numero.AMM, dose.retenue, dose.retenue.unite, nombre.max.d.application,stade.cultural.min..BBCH.,tade.cultural.max..BBCH.)%>% 
+  rename(amm=numero.AMM) %>% 
+  group_by(Use1, amm) %>% 
+  summarize()
+
+head(nUseFR_PPP1)
+####use and product with application rate
+###nUseFR_PPP3 <- nUseFR %>%
+###  drop_na(dose.retenue) %>% 
+###  select(Use1, numero.AMM, dose.retenue, dose.retenue.unite )%>% 
+###  #select(Use1, numero.AMM, dose.retenue, dose.retenue.unite, nombre.max.d.application,stade.cultural.min..BBCH.,tade.cultural.max..BBCH.)%>% 
+###  rename(amm=numero.AMM) %>% 
+###  group_by(Use1, amm,dose.retenue.unite) %>% 
+###  summarize(dose.retenue=max(dose.retenue))
+###
+###nUseFR_PPP31 <- nUseFR_PPP3 %>% 
+###  group_by(amm, Use1) %>% 
+###  summarize(co=n()) %>% 
+###  filter(co>1)
+###View(nUseFR_PPP31)
+###
+###nUseFR_PPP32 <- left_join(nUseFR_PPP3, nUseFR_PPP31, by=c("amm", "Use1"))
+###head(nUseFR_PPP32)
+###nUseFR_PPP321 <- nUseFR_PPP32 %>% 
+###  filter(!is.na(co))
+###nUseFR_PPP322 <- nUseFR_PPP32 %>% 
+###  filter(is.na(co))
+###View(nUseFR_PPP321)
+#types of treatments to be fixed or not to be used
+#write.csv(nUseFR_PPP1, "PPP1_crops.csv", )
+#head(nUseFR_PPP1)
+#View(nUseFR_PPP1)
+
+LCrops<- nUseFR %>% 
+  group_by(Use1) %>% 
+  summarize() %>% 
+  mutate(ID=row_number())
+View(LCrops)
+#write.csv(LCrops, "Crops.csv", fileEncoding="UTF-16LE")
+
+nUseFR_PPP1x <- inner_join(nUseFR_PPP1, LCrops, by="Use1")#usa alternativamente uno o l'altro a seconda di quello che ti serve
+nUseFR_PPP12 <- inner_join(nUseFR_PPPCondEmp, LCrops, by="Use1")#usa alternativamente uno o l'altro a seconda di quello che ti serve
+
+#nUseFR_PPPCondEmp
+CrossTab <- read.csv("CrossTabPPP_crops_EUROcrops.csv", sep=",", header=T)
+
+#facendo inner join tolgo tutti quei casi dove non ho corrispondenza tra i due datasets
+nUseFR_PPPEC <- inner_join(nUseFR_PPP1x, CrossTab, by="ID") %>% 
+  select(-PPPLabel, -original_name, -note) %>%  
+  distinct()
+
+nUseFR_PPPEC1 <-nUseFR_PPPEC %>% 
+  group_by(amm, HCAT2_code,HCAT2_name,HCAT_name,HCAT_code,original_code) %>% 
+  summarize()
+head(nUseFR_PPPEC1)
+
+nUseFR_PPP2x <- inner_join(nUseFR_PPP, LCrops, by="Use1")
+nUseFR_PPPEC2 <- inner_join(nUseFR_PPP2x, CrossTab, by="ID") %>% 
+  select(-PPPLabel, -original_name, -note) %>%  
+  distinct()
+View(nUseFR_PPP12)
+
+#nUseFR_PPPdose <- inner_join(nUseFR_PPP12, CrossTab, by="ID") %>% 
+#  select(-PPPLabel, -original_name, -note) %>%  
+#  distinct()
+write.csv(nUseFR_PPPdose, "usiextended.csv")
+nUseFR_PPPEC3 <-nUseFR_PPPEC2 %>% 
+  #select(-Use3, -ID, -ord, -ord2, Napp, minBBCH, maxBBCH, -Use1, -USe2) %>% 
+  group_by(amm, USe2, HCAT2_code, HCAT2_name, HCAT_code, HCAT_name,dose.retenue.unite, original_code) %>% 
+  summarize(dose.retenue=max(dose.retenue))
+
+nUseFR_PPPgroup<-pivot_wider(nUseFR_PPPEC3, #da agganciare per amm + original_code
+                        id_cols=c("amm", "original_code"),#("amm","code_postal_acheteur"),
+                        names_from=c("USe2", "dose.retenue.unite"),
+                        values_from = "dose.retenue",
+                        values_fn =max)
+
+View(nUseFR_PPPgroup)
+
+###########################################################################################
+## ASSOCIAZIONE PPP, AS, CROPS, dose di applicazione a LIVELLO DI SOSTANZA ATTIVA QUANTITa
+###########################################################################################
+head(FR_PPP)
+head(nUseFR_PPPEC1)
+
+FR_PPP <- FR_PPP %>% 
+  mutate(amm=as.character(amm))
+
+PPP_Crop_Sub <- left_join(FR_PPP, nUseFR_PPPEC1, by="amm")
+head(PPP_Crop_Sub)
+colnames(PPP_Crop_Sub)
+View(PPP_Crop_Sub)
+
+#write.csv(PPP_Crop_Sub, "PPP_Crop_Subnopc0.csv")
+#qui devo dividere il dataset in 2: parte con codice postale e parte senza e agganciargli i campi francesi e distribuire i carichi su tutta le francia
+###PPP_Crop_Sub <- left_join(FR_AS_numx2, nUseFR_PPPall1, by="amm")
+
+#colnames(FR_AS_numx2)
+#checkCS1 <- FR_AS_numx2 %>% 
+#  filter(code_postal_acheteur==67170 & amm=="2000416")
+
+
+#checkCS <- PPP_Crop_Sub %>% 
+#  filter(code_postal_acheteur==67170 & amm=="2000416" & original_code=="BLT")
+#View(checkCS1)
+#neonicotinoids
+#Active == "acetamiprid" | Active == "clothianidin" | Active == "dinotefuran" | Active == "imidacloprid" | Active =="nitenpyram" | Active == "nithiazine" | Active =="thiacloprid" | Active =="thiamethoxam"
+
+#CaseStudy <- PPP_Crop_Sub %>% 
+#  filter(code_postal_acheteur!=0)%>% 
+#  select(-ord, -ord2, -Use1, -ID) %>% 
+#  distinct() #
+
+#InvMatrix <-CaseStudy %>%
+#  filter(Active==Sub) %>% 
+#  mutate(code_postal_acheteur=as.character(code_postal_acheteur))
+#head(InvMatrix)
+
+FRAree <- FRd18 %>% 
+  rename(original_code=code_cultu)
+
+#head(InvMatrix2)
+
+#####################
+#CASO STUDIO NEONICOTINOIDI
+#########
+#####CaseStudyv2NN <- CaseStudy %>% 
+#####  filter(Active == "acetamiprid" | Active == "clothianidin" | Active == "dinotefuran" | Active == "imidacloprid" | Active =="nitenpyram" | Active == "nithiazine" | Active =="thiacloprid" | Active =="thiamethoxam")
+#####head(PPP_Crop_Sub)
+#####str(CaseStudyv1)
+#####
+#####head(CaseStudyv2NN)
+##########
+
+CSNN <- PPP_Crop_Sub  %>% 
+  mutate(code_postal_acheteur=as.integer(code_postal_acheteur))
+View(CSNN)
+head(CSNN)
+
+appmethods <- read.csv("method_application.csv", sep=",", header=T)
+head(appmethods)
+appmethods <-appmethods %>% 
+  select(original_code, CROPTYPE, AS_type, AM_herbicides) %>% 
+  rename(AM= AM_herbicides, AM_type=AS_type) %>% 
+  group_by(original_code, CROPTYPE, AM_type, AM) %>% 
+  summarize()
+CSNN <- left_join(CSNN, appmethods, by=c("original_code", "AM_type"))
+
+
+
+##CSpc01 <- left_join(CSpc0, FRAree6, by="original_code")
+##head(CSpc01)
+##colnames(CSpc01)
+##CSpc01 <- CSpc01 %>% 
+##  filter(!is.na(quantite_substance))
+##
+##CSpc02 <- CSpc01 %>% 
+##select(annee, amm, classification, cas, Active, AScont, muPPP, EN_form, Code, Group, MW, type, VapPres_mPa, AOEL, AAOEL, MU, AM_type, HCAT2_code, HCAT2_name, 
+##       HCAT_name, HCAT_code, original_code, CROPTYPE, AM, code_postal_acheteur.y, sum, quantite_substance, Q_PPP,percFR) %>%
+##  group_by(annee, amm, classification, cas, Active, AScont, muPPP, EN_form, Code, Group, MW, type, VapPres_mPa, AOEL, AAOEL, MU, AM_type, HCAT2_code, HCAT2_name, 
+##           HCAT_name, HCAT_code, original_code, CROPTYPE, AM, code_postal_acheteur.y) %>% 
+##  summarize(quantite_substance=percFR*quantite_substance, sum=sum(sum), Q_PPP = percFR*Q_PPP)
+## head(CSpc02) 
+##max(CSpc02$quantite_substance)
+#areali <- FRAree %>% 
+#  group_by(original_code, code_postal_acheteur) %>% 
+#  summarize()
+#unisco le aree delle crop al mio dataset dei neonicotinoidi -  il territorio stesso che mi dice quali sono le crop resenti sulle quali vanno i NN
+CSNNv1 <- inner_join(CSNN, FRAree, by=c("code_postal_acheteur", "original_code")) %>%
+  distinct()  
+#CSNNvt <- left_join(FRAree, CaseStudyv2NN, by=c("code_postal_acheteur", "original_code"))
+
+head(CSNNv1)
+View(CSNNv1)
+colnames(CSNNv1)
+#write_csv(CSNNv1, "PPP_Crop_Subnopc0.csv")
+setwd("/eos/jeodpp/home/users/galifra/data/FranceData")            # <======================================
+CSNNv1 <- read.csv("PPP_Crop_Subnopc0.csv", sep=",", header = T)   # <======================================
+CSNNv1 <-CSNNv1 %>% rename(ha=sum)
+
+head(CSNNv1)
+##ASdopo <- CSNNv1 %>% 
+##  group_by(Active) %>% 
+##  summarize()
+##CRdopo <- CSNNv1 %>% 
+##  group_by(original_code) %>% 
+##  summarize()
+##PPdopo <- CSNNv1 %>% 
+##  group_by(amm) %>% 
+##  summarize(conta=n())
+##
+##CheckPPPprimadopo <- left_join(PPprima,PPdopo, by="amm")
+##View(FR_AS_num)
+##CheckPPPprimadopov1 <- CheckPPPprimadopo %>% 
+##  filter(is.na(conta))
+
+##checkPPPremovedpd <- inner_join(CheckPPPprimadopov1, FR_AS_num, by="amm")
+##View(checkPPPremovedpd)
+##checkagainremovedpdv1 <- checkPPPremovedpd %>% 
+##  group_by(Active) %>% 
+##  summarize(sommaAS = sum(quantite_substance))
+#aggrego per calcolare le aree relative alla combo amm+active+postalcode+original_code
+CSNNv3 <- CSNNv1 %>% 
+  group_by(amm, Active, code_postal_acheteur) %>% ### PROVA A CAMBIARE NOME AGLI ETTARI
+  summarise(tot_surf_parc_ha=sum(ha)) %>% 
+  distinct()
+CSNNv3b <- CSNNv1 %>% 
+  group_by(amm, code_postal_acheteur) %>% ### PROVA A CAMBIARE NOME AGLI ETTARI
+  summarise(tot_surf_parc_ha=sum(ha)) %>% 
+  distinct()
+head(CSNNv3)
+head(CSNNv3b)
+CSNNv4 <- inner_join(CSNNv1, CSNNv3, by=c("amm", "Active", "code_postal_acheteur"))
+CSNNv4b <- inner_join(CSNNv1, CSNNv3b, by=c("amm", "code_postal_acheteur"))
+
+CSNNv5 <- CSNNv4 %>% 
+  mutate(percArea=round(ha/tot_surf_parc_ha,3))
+CSNNv5b <- CSNNv4b %>% 
+  mutate(percArea=round(ha/tot_surf_parc_ha,3))
+#View(CSNNv5)
+
+CSNNv6 <- CSNNv5 %>% 
+  mutate(AppAS = quantite_substance*percArea, AppRate=quantite_substance/tot_surf_parc_ha, AppPPP = Q_PPP*percArea)
+CSNNv6b <- CSNNv5b %>% 
+  mutate(AppAS = quantite_substance*percArea, AppRate=quantite_substance/tot_surf_parc_ha, AppPPP = Q_PPP*percArea)
+CSNNv6 <- CSNNv6 %>% 
+  mutate(AppRateAS=AppRate, AppRatePPP = Q_PPP/tot_surf_parc_ha) %>% 
+  select(-AppRate)
+CSNNv6b <- CSNNv6b %>% 
+  mutate(AppRateAS=AppRate, AppRatePPP = Q_PPP/tot_surf_parc_ha) %>% 
+  select(-AppRate)
+
+head(CSNNv6)
+
+CSNNv7 <- CSNNv6 %>% 
+  select(-HCAT_name) %>% 
+distinct()
+CSNNv7b <- CSNNv6b %>% 
+  select(-HCAT_name) %>% 
+  distinct()
+
+head(CSNNv7)
+rm(FRd18)
+rm(FR_AS, FR_AS_alt, FR_AS_num, FR_AS_num_, FR_AS_numPC0)
+rm(CSNN, CSNNv1, CSNNv3, CSNNv4, CSNNv5, CSNNv6)
+#rm(CS_ss1)
+
+FR_ASas3 <- CSNNv7 %>% 
+  mutate(AppAS=as.numeric(AppAS)) %>%
+  filter(!is.na(AppAS)) %>% 
+  group_by(Active) %>% 
+  summarize(AppAS=sum(AppAS))
+sum(FR_ASas3$AppAS)
+(sum(FR_ASas1$quantite_substance) - sum(FR_ASas3$AppAS))/sum(FR_ASas1$quantite_substance)*100
+FR_ASas4 <- CSNNv7 %>% 
+  #mutate(AppAS=as.numeric(AppAS)) %>%
+  #filter(!is.na(AppAS)) %>% 
+  group_by(amm) %>% 
+  summarize()
+head(CSNNv7)
+#subset semplifica calcoli
+ssCSNNv7 <- CSNNv7 %>% 
+  select(original_code, AppAS, code_postal_acheteur, type, ha, HCAT2_name)
+#tot vendite in francia della attuale selezione
+CSNNv8 <- ssCSNNv7 %>%
+  drop_na() %>% 
+  mutate(id = 1) %>% 
+  group_by(id) %>% 
+  summarize(SAppAS=sum(AppAS))
+head(ssCSNNv7)
+
+#% 0-100 pressione AS in kg normalizzati x mappa
+CSNNv9 <- ssCSNNv7 %>% 
+  drop_na() %>%
+  group_by(original_code, code_postal_acheteur, HCAT2_name) %>% 
+  summarize(totSAppAS=sum(AppAS)/CSNNv8$SAppAS*100)
+CSNNv9 <- CSNNv9 %>% 
+  mutate(code_postal_acheteur=as.character(code_postal_acheteur))
+
+head(CSNNv9)
+sum(CSNNv9$totSAppAS)
+
+
+ssCSNNv7 <- ssCSNNv7 %>% 
+  mutate(ntype=ifelse(substr(type,1,3)=="Her", "Herbicides",
+                      ifelse(substr(type,1,3)=="Fun", "Fungicides",
+                             ifelse(substr(type,1,3)=="Ins", "Insecticides", "Others"))))
+
+CSNNv8a <- ssCSNNv7 %>%
+  drop_na() %>% 
+  group_by(ntype) %>% 
+  summarize(SAppAS=sum(AppAS))
+head(CSNNv8a)
+view(CSNNv8a)
+
+
+#% 0-100 pressione AS in kg normalizzati x mappa x tipo pesticide
+CSNNv9a <- ssCSNNv7 %>% 
+  drop_na() %>%
+  group_by(original_code, code_postal_acheteur, HCAT2_name, ntype) %>% 
+  summarize(totSAppAS=sum(AppAS))
+head(CSNNv9a)
+ASpressure <- inner_join(CSNNv9a, CSNNv8a, by="ntype") %>% 
+  mutate(pressure=totSAppAS/SAppAS*100) %>% 
+  filter(pressure!=0) %>% 
+  mutate(code_postal_acheteur=as.character(code_postal_acheteur))
+head(ASpressure)
+#carico tot di AS per crop istogrammi
+CSNNv10 <- CSNNv9 %>%
+  drop_na() %>%
+  group_by(original_code, HCAT2_name) %>% 
+  summarize(tot=sum(totSAppAS))
+max(CSNNv10$tot)
+min(CSNNv10$tot)
+head(CSNNv10)
+
+CSNNv10a <- CSNNv10 %>% 
+  filter(tot>0.1)
+sum(CSNNv10a$tot)
+#CS1011 <- inner_join(CSNNv10, CSNNv11, by="HCAT2_name")
+ASxcrops <- ggplot(CSNNv10a, aes(x=HCAT2_name, y=tot))+
+  geom_bar(stat="identity")+
+  labs(x = "Crops", y ="%" )+
+theme(axis.text.x = element_text(angle = 90, hjust=1))+##+#, vjust = 0.0))+ #))+
+  guides(fill="none")
+ASxcrops
+CSNNv10a %>% 
+filter(!is.na(tot)) %>%
+  arrange(tot) %>%
+  mutate(HCAT2_name=factor(HCAT2_name, HCAT2_name)) %>%
+  ggplot( aes(x=HCAT2_name, y=tot) ) +
+  geom_segment( aes(x=HCAT2_name ,xend=HCAT2_name, y=0, yend=tot), color="grey") +
+  geom_point(size=3, color="#39f7a2") +
+  coord_flip() +
+  #theme_ipsum() +
+  theme(
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.y = element_blank(),
+    legend.position="none"
+  ) +
+  ylab("% total kg")+
+  xlab("Crop")
+
+CSNNv11b <- ssCSNNv7 %>% 
+  mutate(id = 1) %>% 
+  drop_na() %>%
+  group_by(id) %>% 
+  summarize(Totha=sum(ha))
+
+#area crop istogrammi
+CSNNv11 <- ssCSNNv7 %>% 
+  drop_na() %>%
+  group_by(original_code, HCAT2_name) %>% 
+  summarize(totha=sum(ha)/CSNNv11b$Totha*100)
+
+CSNNv11a <- CSNNv11 %>% 
+  filter(totha>0.1)
+max(CSNNv11a$totha)
+min(CSNNv11a$totha)
+CSNNv11a %>%
+  filter(!is.na(totha)) %>%
+  arrange(totha) %>%
+  mutate(HCAT2_name=factor(HCAT2_name, HCAT2_name)) %>%
+  ggplot( aes(x=HCAT2_name, y=totha) ) +
+  geom_segment( aes(x=HCAT2_name ,xend=HCAT2_name, y=0, yend=totha), color="grey") +
+  geom_point(size=3, color="#39b7a2") +
+  coord_flip() +
+  #theme_ipsum() +
+  theme(
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.y = element_blank(),
+    legend.position="none"
+  ) +
+  ylab("% total area")+
+  xlab("Crop")
+
+ratios <- inner_join(CSNNv11, CSNNv10, by="original_code")
+ratiosa <- inner_join(CSNNv11a, CSNNv10a, by="original_code")
+
+head(ratios)
+head(ratios2)
+
+view(ratios2)
+view(ratiosa2)
+view(ratiosa)
+
+ratiosa <- ratiosa %>% 
+  rename(ha=totha, kg=tot)  
+ratiosa <- ratiosa %>% 
+  gather("group", "perc",c("ha", "kg"))
+ratiosa <- ratiosa %>%   
+  select(-HCAT2_name.y) %>% 
+  rename(HCAT2_name=HCAT2_name.x)
+
+ratios2 <- ratios %>% 
+  group_by(original_code, HCAT2_name.x) %>% 
+  summarize(ratio=tot/totha)
+ratios2 <- ratios2 %>% 
+  mutate(rat=round(ratio, 2)) %>% 
+  select(-ratio) %>% 
+  rename(ratio=rat, HCAT2_name=HCAT2_name.x)
+view(ratios2)
+
+ratiosa2 <- ratiosa %>% 
+  group_by(original_code, HCAT2_name.x) %>% 
+  summarize(round(ratio=tot/totha,digits = 2))
+
+ggplot(ratiosa, aes(x=HCAT2_name, y=perc, fill=group)) +
+  geom_bar(stat="identity", position=position_dodge())+
+  coord_flip()+
+  labs(x = "Crops", y="%")+
+  scale_fill_discrete(name = "AS-kg vs Crop-ha")#, labels = c("ha", "kg"))
+  
+rm(ASpressure, CSNNv10, CSNNv8, CSNNv9, CSNNv9a, FR_ASas3)
+#################
+###EXPOSURE ASSESSMENT###
+#seleziono un dataset completo senza buchi o NA
+CSNNv7_1k <- head(CSNNv7, 1000)
+head(CSNNv7_1k)
+View(CSNNv7_1k)
+colnames(CSNNv7)
+ 
+test_data2<-pivot_wider(CSNNv7b,
+                      id_cols=c("code_postal_acheteur", "original_code","HCAT2_name", "ha"),#("amm","code_postal_acheteur"),
+                      names_from="Active",
+                      values_from = c("quantite_substance","AppRateAS"),
+                      values_fn =sum)
+
+setwd("/eos/jeodpp/home/users/galifra/data")
+write.csv(test_data, "data_parcels.csv")
+write.csv(test_data2, "data_parcels2.csv")
+
+CS_ss <- CSNNv7 %>% 
+  filter(code_postal_acheteur>0 & 
+           !is.na(amm)& 
+           !is.na(EN_form)& 
+           !is.na(Code) & 
+           !is.na(Group)& 
+           !is.na(type)&
+           !is.na(VapPres_mPa)&
+           !is.na(AOEL)&
+           AOEL > 0&
+           !is.na(AM_type)&
+           !is.na(AM)&
+           !is.na(ha)&
+           !is.na(AppRateAS))
+CS_ss0 <- CSNNv7 %>% 
+  filter(code_postal_acheteur>0 | 
+           !is.na(amm)| 
+           !is.na(EN_form)| 
+           !is.na(Code) | 
+           !is.na(Group)| 
+           !is.na(type)|
+           !is.na(VapPres_mPa)|
+           !is.na(AOEL)|
+           AOEL > 0|
+           !is.na(AM_type)|
+           !is.na(AM)|
+           !is.na(ha)|
+           !is.na(AppRateAS))
+
+
+rm(CSNNv7)
+CS_ss1 <- CS_ss %>% 
+  mutate(AOEL = as.numeric(AOEL))
+CS_ss1 <- CS_ss1 %>%
+  filter(!is.na(AOEL))
+CS_ss1 <- CS_ss1 %>%
+  filter(AOEL>0)
+
+
+FR_ASas5 <- CS_ss1 %>% 
+  mutate(AppAS=as.numeric(AppAS)) %>%
+  filter(!is.na(AppAS)) %>% 
+  group_by(Active) %>% 
+  summarize(AppAS=sum(AppAS))
+sum(FR_ASas5$AppAS)
+(sum(FR_ASas1$quantite_substance) - sum(FR_ASas5$AppAS))/sum(FR_ASas1$quantite_substance)*100
+FR_ASas6 <- CS_ss1 %>% 
+  #mutate(AppAS=as.numeric(AppAS)) %>%
+  #filter(!is.na(AppAS)) %>% 
+  group_by(amm) %>% 
+  summarize()
+
+
+CS_ss1 <- CS_ss1 %>% 
+  mutate(VapConc=ifelse(VapPres_mPa<0.5, 0.001, 0.015))
+CS_ss1 <- CS_ss1 %>% 
+  mutate(AdDeSrDrEx10=ifelse(AM=="downw.spray", 0.11, 3.68), AdInSpDrEx10=ifelse(AM=="downw.spray", 0.00008, 0.0017),
+         AdDeSrDrEx05=ifelse(AM=="downw.spray", 0.12, 3.68), AdInSpDrEx05=ifelse(AM=="downw.spray", 0.00009, 0.0017))
+CS_ss1 <- CS_ss1 %>% 
+  mutate(ChDeSrDrEx10=ifelse(AM=="downw.spray", 0.1, 1.11), ChInSpDrEx10=ifelse(AM=="downw.spray", 0.00008, 0.00083),
+         ChDeSrDrEx05=ifelse(AM=="downw.spray", 0.12, 1.11), ChInSpDrEx05=ifelse(AM=="downw.spray", 0.0001, 0.00083))
+setwd("/eos/jeodpp/home/users/galifra/data/FranceData")
+form_EN <- read.csv("formulations_EN.csv", sep=",", header=T, na.strings = "<NA>")
+
+form_EN <- form_EN %>% 
+  select(amm, EN_form, Code, Group)
+Scen <- read.csv("scenarios.csv", sep=",", header=T)
+
+CS_ss1<- left_join(CS_ss1, form_EN, by="amm")
+CS_ss1<- left_join(CS_ss1, Scen, by="original_code")
+
+
+CS_ss1 <- CS_ss1 %>% 
+  select(-EN_form.x, -Code.x, -Group.x) %>% 
+  rename(EN_form=EN_form.y, Code=Code.y, Group=Group.y)
+#PER ORA NON CONSIDERO I GRANULI: GROUP 5
+CS_ss1 <- CS_ss1 %>% 
+  filter(Group<5) %>% 
+  mutate(DermAbs= ifelse((Group==1 | Group==3),0.7, 0.5)) 
+
+d_AreaHM <- 20             # cm2
+d_BreathRAd <- 0.27        # m3/day/kg
+d_BreathRCh <- 0.8         # m3/day/kg
+d_BwAdult <- 60            # kg
+d_BwChild <- 10            # kg
+d_ByBreathRAd <- 0.053     # m3/hours/kg
+d_ByBreathRCh <- 0.228     # m3/hours/kg
+d_ByExpDur <- 2            # hours
+d_ByFreqHM <- 20           # events/hour
+d_ByTCAd <- 14500          # cm2/hour
+d_ByTCCh <- 5200           # cm2/hour
+d_ClothAF <- 0.18          # %
+d_DRP <- 0.20              # %
+d_InhalTcAut <- 0.15       # ha/hour*10^-3
+d_InhalTcOrn <- 0.1        # ha/hour*10^-3
+d_MouthGrass <- 25         # cm2 grass/day
+d_ReExpDur <- 2            # hours
+d_ReExpDurInhal <- 24      # hours
+d_ExpDurTreatCrop <- 0.25  # hours
+d_ReFreqHM <- 9.5          # events/hour
+d_ReTCAd <- 7300           # cm2/hour
+d_ReTCCh <- 2600           # cm2/hour
+d_SalExt <- 0.50           # %
+d_TcEntryAd <- 7500        # cm2/h
+d_TcEntryCh <- 2250        # cm2/h
+d_TcEntryMeanAd <- 5980    # cm2/h
+d_TcEntryMeanCh <- 1794    # cm2/h
+d_TurfGranules <- 0.01     # %
+d_TurfSoluble <- 0.05      # %
+d_PctExtrapolation <- 1.5  # kg
+DriftRed <- 0              # %
+InhalAbs <- 1
+OralAbs <- 1
+MAF <- 1
+DFR_res <- 3               #(μg a.s./cm2 of foliage)/(kg a.s. applied/ha)
+#SPRAY DRIFT
+CS_ss1 <- CS_ss1 %>% 
+  mutate(SrpDrft_Ad = (AdDeSrDrEx10*DermAbs*(1-d_ClothAF)+AdInSpDrEx10*InhalAbs)*AppRateAS*10*(1-DriftRed),
+         SrpDrft_Ad05 = (AdDeSrDrEx05*DermAbs*(1-d_ClothAF)+AdInSpDrEx05*InhalAbs)*AppRateAS*10*(1-DriftRed))
+
+CS_ss1 <- CS_ss1 %>% 
+  mutate(SrpDrft_Ch = (ChDeSrDrEx10*DermAbs*(1-d_ClothAF)+ChInSpDrEx10*InhalAbs)*AppRateAS*10*(1-DriftRed),
+         SrpDrft_Ch05 = (ChDeSrDrEx05*DermAbs*(1-d_ClothAF)+ChInSpDrEx05*InhalAbs)*AppRateAS*10*(1-DriftRed))
+#VAPOUR
+CS_ss1 <- CS_ss1 %>% 
+  mutate(Vapour_Ad = (VapConc * d_BreathRAd * d_BwAdult * InhalAbs ),
+         Vapour_Ch = (VapConc * d_BreathRCh * d_BwChild * InhalAbs ))
+
+CS_ss1 <- CS_ss1 %>% 
+  mutate(DriftPerc10_Res =ifelse(CROPTYPE=="field.crops",0.01,
+                                 ifelse(CROPTYPE=="fruit.crops",0.0607,
+                                        ifelse(CROPTYPE=="grapes",0.0077,0.0291))),
+         DriftPerc05_Res =ifelse(CROPTYPE=="field.crops",0.018,
+                                 ifelse(CROPTYPE=="fruit.crops",0.1169,
+                                        ifelse(CROPTYPE=="grapes",0.0232,0.0591))))
+         #Scen=ifelse((CROPTYPE=="field.crops" | CROPTYPE=="fruit.crops"), "agri.grass", "others"))
+#Surface Deposit (1/3 Dermal Transfer solo Children)
+CS_ss1 <- CS_ss1 %>% 
+  mutate(DermTran_Ad = AppRateAS/100*MAF*DriftPerc10_Res*(1-DriftRed)*d_TurfSoluble*d_ReTCAd*d_ReExpDur*DermAbs,
+         DermTran_Ch = AppRateAS/100*MAF*DriftPerc10_Res*(1-DriftRed)*d_TurfSoluble*d_ReTCCh*d_ReExpDur*DermAbs,
+         DermTran_Ad05 = AppRateAS/100*MAF*DriftPerc05_Res*(1-DriftRed)*d_TurfSoluble*d_ReTCAd*d_ReExpDur*DermAbs,
+         DermTran_Ch05 = AppRateAS/100*MAF*DriftPerc05_Res*(1-DriftRed)*d_TurfSoluble*d_ReTCCh*d_ReExpDur*DermAbs)
+
+#Surface Deposit (2/3 Hand Transfer solo Children)
+CS_ss1 <- CS_ss1 %>% 
+  mutate(HandTran_Ch = AppRateAS/100*MAF*DriftPerc10_Res*(1-DriftRed)*d_TurfSoluble*d_SalExt*d_AreaHM*d_ReFreqHM*d_ReExpDur*OralAbs,
+         HandTran_Ch05 = AppRateAS/100*MAF*DriftPerc05_Res*(1-DriftRed)*d_TurfSoluble*d_SalExt*d_AreaHM*d_ReFreqHM*d_ReExpDur*OralAbs)
+
+#Surface Deposit (3/3 Object Transfer solo Children)
+CS_ss1 <- CS_ss1 %>% 
+  mutate(ObjTran_Ch = AppRateAS/100*MAF*DriftPerc10_Res*(1-DriftRed)*d_DRP *d_MouthGrass*OralAbs,
+         SYSEXP_Ch = ObjTran_Ch+HandTran_Ch+DermTran_Ch,
+         ObjTran_Ch05 = AppRateAS/100*MAF*DriftPerc05_Res*(1-DriftRed)*d_DRP *d_MouthGrass*OralAbs,
+         SYSEXP_Ch05 = ObjTran_Ch05+HandTran_Ch05+DermTran_Ch05)
+
+#Entry Into Treated Fields Scenario = Agri + Grass e anche Others (nell'if clause)
+CS_ss1 <- CS_ss1 %>% 
+  mutate(EITC_DTran_Ad = ifelse(Scen=="agri.grass",AppRateAS/100*MAF*d_TurfSoluble*d_ReTCAd*d_ExpDurTreatCrop*DermAbs,
+                                DFR_res*AppRateAS*MAF*d_TcEntryMeanAd*d_ExpDurTreatCrop*DermAbs*1/1000),
+         EITC_DTran_Ch = ifelse(Scen=="agri.grass",(AppRateAS/100*MAF*d_TurfSoluble*d_ReTCCh*d_ExpDurTreatCrop*DermAbs)+
+                                                      (AppRateAS/100*MAF*d_TurfSoluble*d_SalExt*d_AreaHM*d_ReFreqHM*d_ReExpDur*OralAbs)+
+                                                         (AppRateAS/100*MAF*d_DRP *d_MouthGrass*OralAbs),
+                                DFR_res*AppRateAS*MAF*d_TcEntryMeanCh*d_ExpDurTreatCrop*DermAbs*1/1000))
+  #TOTAL EXPOSURE Resident   
+CS_ss1 <- CS_ss1 %>% 
+  mutate(TotExp_Ad_Res10 = (SrpDrft_Ad +  Vapour_Ad + DermTran_Ad + EITC_DTran_Ad)/d_BwAdult,
+         TotExp_Ch_Res10 = (SrpDrft_Ch +  Vapour_Ch + SYSEXP_Ch + EITC_DTran_Ch)/d_BwChild,
+         TotExp_Ad_Res05 = (SrpDrft_Ad05 +  Vapour_Ad + DermTran_Ad05 + EITC_DTran_Ad05)/d_BwAdult,
+         TotExp_Ch_Res05 = (SrpDrft_Ch05 +  Vapour_Ch + SYSEXP_Ch05 + EITC_DTran_Ch05)/d_BwChild)
+
+CS_ss1 <- CS_ss1 %>% 
+  mutate(AOEL = as.numeric(AOEL))
+CS_ss1 <- CS_ss1 %>% 
+  filter(!is.na(AOEL)| AOEL > 0)
+
+CS_ss1 <- CS_ss1 %>% 
+  mutate(pAOEL_Ad_Res10 = TotExp_Ad_Res10/AOEL,
+         pAOEL_Ch_Res10 = TotExp_Ch_Res10/AOEL,
+         pAOEL_Ad_Res05 = TotExp_Ad_Res05/AOEL,
+         pAOEL_Ch_Res05 = TotExp_Ch_Res05/AOEL)
+
+CS_ss1as <- CS_ss1 %>% 
+  group_by(Active) %>% 
+  summarize()
+
+head(CS_ss1)
+EXP_REStot <- CS_ss1 %>% 
+  group_by(code_postal_acheteur, HCAT2_code, HCAT2_name, HCAT_code, original_code) %>% 
+  summarize(totpAOEL_Ad_Res10=sum(pAOEL_Ad_Res10), totpAOEL_Ch_Res10=sum(pAOEL_Ch_Res10), 
+            totpAOEL_Ad_Res05=sum(pAOEL_Ad_Res05), totpAOEL_Ch_Res05=sum(pAOEL_Ch_Res05), nPPP=n() )
+
+head(EXP_REStot$nPPP)
+
+head(EXP_REStot)
+view(EXP_REStot)
+str(EXP_REStot)
+colnames(CS_ss1)
+head(CS_ss1)
+EXP_REStot$totpAOEL_Ad_Res10[EXP_REStot$totpAOEL_Ad_Res10== "Inf"] <- 100000
+EXP_REStot$totpAOEL_Ch_Res10[EXP_REStot$totpAOEL_Ch_Res10== "Inf"] <- 100000
+
+histoEXP_REStot <- EXP_REStot %>% 
+  mutate(cls = ifelse(totpAOEL_Ad_Res10>0 & totpAOEL_Ad_Res10<1, 1, 
+                         ifelse(totpAOEL_Ad_Res10>=1&totpAOEL_Ad_Res10<5, 2, 
+                                ifelse(totpAOEL_Ad_Res10>=5&totpAOEL_Ad_Res10<10, 3,
+                                       ifelse(totpAOEL_Ad_Res10>=10&totpAOEL_Ad_Res10<100, 4,
+                                              ifelse(totpAOEL_Ad_Res10>=100, 5, 0))))))
+histoEXP_REStot2 <- histoEXP_REStot %>% 
+group_by(cls) %>% 
+  summarize(freq=n()) 
+#histogram
+ggplot(histoEXP_REStot2, aes(x=cls, y=freq, fill=factor(cls)))+
+  geom_bar(stat="identity", position=position_dodge())+
+  scale_fill_discrete(name = "classes")+#limits = c("0-1", "1-10", "10-100", "100-1000", ">1000",name = "classes"))+
+  scale_fill_manual(values=c("#fcfdbf", "#fc8761","#b63679","#501276",
+                               "#000004"))+
+  labs(x = "classes", y="freq")
+  scale_fill_discrete()
+                                                                                         
+  scale_fill_manual(v)
+view(histoEXP_REStot)
+# da qui se vuoi caricare il file
+#write_csv(EXP_REStot, "EXPtot_RES.csv")
+#expasres10<- read.csv("EXPtot_RES.csv", sep=",", header=T)
+
+# PostgreSQL DB parameters 
+#host <- "myHost"
+#port <- 5432 
+#username <- "myName" 
+#dbname <- "myDb" 
+#password <- "MyPassword" 
+# Connect to db  
+
+#str(expasres10)
+
+#expasres10 <- expasres10 %>% 
+#  mutate(code_postal_acheteur=as.character(code_postal_acheteur))
+
+##### IMPORTANTE PER SCRIVERE DIRETTAMENTE SU REFOCUS
+#dbWriteTable(connec, "expsresident", value = expasres10, overwrite = T, append = F, row.names = FALSE)
+
+# Write data to db - currently only writes to default schema # Disconnect db dbDisconnect(conn)
+
+drv <- dbDriver("PostgreSQL")
+connec <- dbConnect(drv,
+                    dbname = "refocus_gsaa_db",
+                    host = "jeodb01.cidsn.jrc.it",
+                    port = 54321,
+                    user = "refocus_gsaa_user", #user con privilegi elevati
+                    password = "QXpSEmJZYZ")    #user con privilegi elevati
+dbWriteTable(connec, "ASpressure", value = ASpressure, overwrite = T, append = F, row.names = FALSE)
+dbWriteTable(connec, "aspresall", value = CSNNv9, overwrite = T, append = F, row.names = FALSE)
+
+expasres10f <- expasres10 %>% 
+  group_by(totpAOEL_Ad_Res10) %>% 
+  summarize(freq=n(totpAOEL_Ad_Res10))
+
+bars <- ggplot(expasres10, aes(totpAOEL_Ad_Res10))+
+  geom_boxplot(aes(weight=totpAOEL_Ad_Res10, fill=1))#+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=2))+
+  guides(fill="none")#+
+ # labs(x = "Cap", title=paste0("Q4 - Zip Code", "\n", " answered: ",sum(Answ4$Freq) ))#+
+#Codice di avviamento postale #title = "MAIN TITLE", x = "X-AXIS TITLE", + 
+stat_count(geom = "text", colour = "black", size = 3, 
+           aes(label = paste(Freq, "\n", Perc, "%")), vjust=0)
+
+CSNNv1as <- CSNNv1 %>% 
+  group_by(Active) %>% 
+  summarize()
+
+CSNNv1ppp <- CSNNv1 %>% 
+  group_by(amm) %>% 
+  summarize()
+ #write.csv(NPPPnn, "NASPPPCropsPC.csv")
+#NPPPnn <- read.csv("ASPPPCropsPC.csv", sep=",", header=T,  fileEncoding="UTF-16LE")
+##TEST <- CSNNv7 %>% 
+##group_by(annee, code_postal_acheteur, amm, cas, Active, AScont, quantite_substance, Q_PPP, HCAT2_code, HCAT2_name,
+##         HCAT_code, original_code, sum, tot_surf_parc_ha, percArea, AppAS, AppRate, AppPPP) %>% 
+##  distinct()
+
+
+#EuroCropnn <- unique(CSNNv6$HCAT2_name)
+
+NPPP <- CSNNv7 %>% 
+  group_by(annee, code_postal_acheteur, amm, cas, Active, AScont, quantite_substance, Q_PPP, HCAT2_code, HCAT2_name,
+           HCAT_code, original_code, tot_surf_parc_ha, percArea, AppRateAS, AppRatePPP) %>% 
+  summarise(SumAppAS=sum(AppAS), SumApp3P=sum(AppPPP), ha=sum(ha))
+
+View(NPPPnn)
+NASnn <- NPPPnn %>%  #CSNNv7 %>% 
+  group_by(Active, HCAT2_name, original_code, code_postal_acheteur) %>% 
+  summarise(SumAppAS=sum(SumAppAS), ha=sum(ha)) 
+
+NASnn <-NASnn %>% 
+  mutate(join=paste(original_code, code_postal_acheteur, sep="_"))
+
+pivSubQCrop<-pivot_wider(NASnn,
+                         id_cols="join",#("amm","code_postal_acheteur"),
+                         names_from="Active",
+                         values_from = "SumAppAS",
+                         values_fn =sum)
+head(pivSubQCrop)
+setwd("/eos/jeodpp/home/users/galifra/data/FranceData")
+write.csv(NASnn, "XAllASjoin.csv")
+
+rm(alt_amm, CaseStudy, CaseStudyv2NN, CSNN, CSNNv1, CSNNv4, CSNNv3, CSNNv5, CSNNv6, CSNNvt, FR_AS,
+   FR_AS_alt, FR_AS_num, FR_AS_num_, FR_AS_subs, FR_AS_subs2, FRd18, pppFR_AS, provams, provams2)
+
+#checkCS6 <- FR_AS %>% 
+#  filter(amm=="2000416"& code_postal_acheteur==67170)
+#test pa x crop con quantita
+
+test_pivSubQCrop<-pivot_wider(PPP_Crop_Sub,
+                              id_cols="Use1",#("amm","code_postal_acheteur"),
+                              names_from="Active",
+                              values_from = "quantite_substance",
+                              values_fn =sum)
+head(test_pivSubQCrop)
+
+PPP_Crop_SubDose <- PPP_Crop_Sub %>%
+  filter(dose.retenue.unite=="L/ha"|dose.retenue.unite=="kg/ha")
+
+test_pivSubARCrop<-pivot_wider(PPP_Crop_SubDose,
+                               id_cols=Use1,#("amm","code_postal_acheteur"),
+                               names_from=Active,
+                               values_from = dose.retenue,
+                               values_fn = list(dose.retenue = mean))
+#head(test_pivSubQCrop)
+#head(test_pivSubARCrop)
+
+#creo la lista delle crop provenineti dalle etichette dei PPP
+write.csv(test_pivSubQCrop, "test_pivSubQCrop.csv", fileEncoding="UTF-16LE")
+write.csv(test_pivSubARCrop, "test_pivSubARCrop.csv", fileEncoding="UTF-16LE")
+##setwd("/eos/jeodpp/home/users/galifra/SHP")
+##Reg <- st_read("dis_simplyFR.shp")
+##Reg1 <- Reg %>% 
+##  slice(1:100)
+##str(Reg1)
+##Reg1 <- left_join(Reg, pivSubQCrop, by="Join")
+###Reg1 <- Reg1 %>% 
+###  mutate(parcels__3=acetamiprid.x) %>% 
+###  rename(acet=parcels__3)
+##head(Reg)
+##tmap_mode("view")
+##tmap_options(check.and.fix = T)
+##
+##tm_shape(World)+  #tm_shape(World, bbox=box) +
+##  #tm_view(set.view = c(9.7, 45.5, 7))+ #, view.legend.position = c("left", "top"))+
+##  tm_basemap("OpenStreetMap")+
+##  tm_borders("white", lwd = .5) +
+##  tm_shape(Reg1)+
+##  tm_polygons(col="parcels__9")
+##  #tm_fill("Freq", alpha = 0.8, style="cat", palette="-Set2", title = "Number of Forms per ZIPcode")+  #Numero Questionari x CAP
+##  #guides(fill=guide_legend(title="Answers"))
+##
+
+
+
+head(pppFR_AS)
+pppFR_AS <- pppFR_AS %>% 
+  select(-annee.y, achat_etranger.x) %>% 
+  rename(year=annee.x, achat_etranger=achat_etranger.y) 
+
+
+##################### ## oppure unisco direttamente i dati dei PPP a quello delle AS + crops
+## Risultato fondamentale PPP e AS e crop per francia
+####
+FR_F <- left_join(pppFR_ASfin, nUseFR_PPP1, by="amm")#, "code_postal_acheteur"))
+head(FR_F)
+FR_fcomplete <- left_join(pppFR_ASfin, nUseFR_PPP, by="amm")
+View(FR_F)
+FR_fEuroCrops <- left_join(pppFR_ASfin, nUseFR_PPPall, by="amm")#, "code_postal_acheteur"))
+
+FR_EUCr <- FR_fEuroCrops %>% 
+  filter(code_postal_acheteur!="0")
+
+FR_EUCrV1 <- FR_EUCr %>% 
+  select(-code_commune_insee) %>% 
+  group_by(year, code_postal_acheteur, amm, classification, cas, Active, quantite_substance, quantite_produit, conditionnement,
+           achat_etranger, AScont, Use1, ID, original_code) %>% 
+  summarize()
+
+str(FR_EUCr)
+FR_EUCrV2 <- FR_EUCrV1 %>%
+  filter(!is.na(original_code))
+
+
