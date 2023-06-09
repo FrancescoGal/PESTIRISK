@@ -1,1 +1,257 @@
+# Please for more details have a look to this page:
+# https://github.com/FrancescoGal/PESTIRISK/blob/main/Background%20PesticideBanAssessment
 
+# The developed procedure serves at adding three permanent crop classes to the Eu Crop Map, 
+# where they are actually not really well mapped. The resulting map is the Enriched EU Crop Map.
+# Buffers of different extents (10, 50, 100, 150m) will be created starting from CLC+ artificial areas 
+# or from GHSL (which ratio/percentage of coverage to be selected? 
+# The spatial resolution is 10x10 m, pixel value goes from 0 to 100m2) 
+
+# Buffer areas intercept the Enriched EU Crop Map. The aim of this procedure is to characterize the distribution/amount 
+# of crops falling into the intercepted areas and to extend the procedure to the whole EU.
+
+# [ ] Re-project and align the three layers within the same reference coordinate system
+    # in re-projecting a tile of the EU Crop Map, NO DATA acquire strange values like -10^40 to be taken into account
+
+# [ ] Reclassify 3 classes of CLC with codes that are not in contrast with EU Crop Map (for example: 221 pixel value refers to Vineyards in EU Crop Map and to potato fields in CLC). The three classes are: 221 vineyards, 222 Fruit trees, 223 Olive groves.
+    # QGIS Command used: "Reclassify by table" 
+    processing.run("native:reclassifybytable", 
+    {'INPUT_RASTER':'/eos/jeodpp/home/users/galifra/data/Buffer/CLC18_100m_ss2.tif',
+    'RASTER_BAND':1,'TABLE':['221','221','721','222','222','722','223','223','723'],
+    'NO_DATA':-9999,
+    'RANGE_BOUNDARIES':2,
+    'NODATA_FOR_MISSING':False,
+    'DATA_TYPE':2,
+    'OUTPUT':'/eos/jeodpp/home/users/galifra/data/Buffer/Model/RC_CLC_pc.tif'})
+    
+# [ ] Resample the Reclassified CLC from 100m to 10m spatial resolution
+    # QGIS Command Used: "Raster Calculator"
+    processing.run("qgis:rastercalculator", 
+    {'EXPRESSION':'"RC_CLC_pc@1"',
+    'LAYERS':None,
+    'CELLSIZE':10,
+    'EXTENT':'4177374.454900000,4286528.830400000,2356237.823500000,2438663.243700000 [EPSG:3035]',
+    'CRS':QgsCoordinateReferenceSystem('EPSG:3035'),
+    'OUTPUT':'/eos/jeodpp/home/users/galifra/data/Buffer/Model/RS_RC_CLC_pc.tif'})
+    
+# [ ] Merge the resampled and reclassified classes of CLC with the EU Crop Map to obtain an enriched EU Crop Map with permanent crops
+    # QGIS Command Used: "Raster Calculator"
+    processing.run("qgis:rastercalculator", 
+    {'EXPRESSION':'if(("CLC18_permacrop10mReclass@1" = 721  OR  "CLC18_permacrop10mReclass@1" = 722 OR "CLC18_permacrop10mReclass@1" = 723), 
+    "CLC18_permacrop10mReclass@1", 
+    "EUCROPMAP_2018@1")',
+    'LAYERS':['/eos/jeodpp/data/projects/REFOCUS/data/tasks/pestirisk/data/EUCROPMAP_2018.tif'],
+    'CELLSIZE':10,
+    'EXTENT':4177374.454900000,4286528.830400000,2356237.823500000,2438663.243700000 [EPSG:3035]',
+    'CRS':QgsCoordinateReferenceSystem('EPSG:3035'),
+    'OUTPUT':'/eos/jeodpp/home/users/galifra/data/Buffer/CLCpermacrop+EUCropMap18.tif'})
+    
+# [ ] Use the artificial surface class of CLC+ as reference of urbanized/sensitive areas, or use the GHSL (which ratio/percentage of coverage to be selected? The spatial resolution is 10x10 m, pixel value goes from 0 to 100m2) to create 4 different buffer areas: 10m, 50m, 100m and 150m from the Artificial surfaces (CLC+) or from GHSL.
+    # QGIS Command used: "Reclassify by table"
+    processing.run("native:reclassifybytable", 
+    {'INPUT_RASTER':'/eos/jeodpp/home/users/galifra/data/Buffer/CLC_BB_ss.tif',
+    'RASTER_BAND':1,'TABLE':['1','1','1','2','255','0'],
+    'NO_DATA':-9999,
+    'RANGE_BOUNDARIES':2,
+    'NODATA_FOR_MISSING':False,
+    'DATA_TYPE':2,
+    'OUTPUT':'/eos/jeodpp/home/users/galifra/data/Buffer/CLC_BB_ss_rcls01.tif'})
+    
+# [ ] Analyse the intersected areas between the four buffer areas and the enriched EU Crop Map
+   # [ ] Buffer Creation:
+   # QGIS Command Used: "r.buffer"
+    processing.run("grass7:r.buffer", 
+    {'input':'/eos/jeodpp/home/users/galifra/data/Buffer/CLC_BB_ss_rcls01.tif',
+    'distances':'10,50,100,150',
+    'units':0,
+    '-z':True,
+    'output':'/eos/jeodpp/home/users/galifra/data/Buffer/buffer_ssFromCLCBB.tif',
+    'GRASS_REGION_PARAMETER':None,
+    'GRASS_REGION_CELLSIZE_PARAMETER':0,
+    'GRASS_RASTER_FORMAT_OPT':'',
+    'GRASS_RASTER_FORMAT_META':''})
+   # [ ] Buffer Intersection 
+   (only for the 10m buffer. This step should be reiterated for "buffer_ssFromCLCBB@1"=3, 4 and 5):
+   processing.run("qgis:rastercalculator",
+   {'EXPRESSION':'if("buffer_ssFromCLCBB@1"=2,
+   (("CLCpermacrop+EUCropMap18.tif@1"*"buffer_ssFromCLCBB@1")/2),0)',
+   'LAYERS':['/eos/jeodpp/home/users/galifra/data/Buffer/CLC+EUCropMap18_permacrop10mrcls.tif'],
+   'CELLSIZE':10,
+   'EXTENT':4177374.454900000,4286528.830400000,2356237.823500000,2438663.243700000 [EPSG:3035]',
+   'CRS':QgsCoordinateReferenceSystem('EPSG:3035'),
+   'OUTPUT':'/eos/jeodpp/home/users/galifra/data/Buffer/Buff10_CLC+EUCropMap18.tif'})
+   
+# [ ] Characterize the intersected areas vs the Enriched EU Crop map at NUTS2 or NUTS3 level
+   # QGIS Command Used: Raster Layer Unique Values report:
+processing.run("native:rasterlayeruniquevaluesreport", 
+{'INPUT':'/eos/jeodpp/home/users/galifra/data/Buffer/Buff10_CLC+EUCropMap18.tif',
+'BAND':1,
+'OUTPUT_HTML_FILE':'/eos/jeodpp/home/users/galifra/data/Buffer/CompleteViewCLC+EuCropMap_buf10.html',
+'OUTPUT_TABLE':'/eos/jeodpp/home/users/galifra/data/Buffer/CompleteViewCLC+EuCropMap_buf10.csv'})
+
+###############
+#### Exported Model in Python:
+###############
+
+"""
+Model exported as python.
+Name : EnrichEUCropMap
+Group : 
+With QGIS : 32207
+"""
+
+from qgis.core import QgsProcessing
+from qgis.core import QgsProcessingAlgorithm
+from qgis.core import QgsProcessingMultiStepFeedback
+from qgis.core import QgsProcessingParameterRasterLayer
+from qgis.core import QgsProcessingParameterFileDestination
+from qgis.core import QgsProcessingParameterFeatureSink
+from qgis.core import QgsCoordinateReferenceSystem
+import processing
+
+
+class Enricheucropmap(QgsProcessingAlgorithm):
+
+    def initAlgorithm(self, config=None):
+        self.addParameter(QgsProcessingParameterRasterLayer('euclc100m', 'EU CLC 100m', defaultValue=None))
+        self.addParameter(QgsProcessingParameterRasterLayer('europeancropmap2018', 'European Crop Map 2018', defaultValue=None))
+        self.addParameter(QgsProcessingParameterRasterLayer('rsrcclcmanual', 'RS_RC_CLCmanual', defaultValue=None))
+        self.addParameter(QgsProcessingParameterFileDestination('Buf10stats', 'Buf10Stats', optional=True, fileFilter='HTML files (*.html)', createByDefault=True, defaultValue=None))
+        self.addParameter(QgsProcessingParameterFeatureSink('Buf10statscsv', 'Buf10Statscsv', optional=True, type=QgsProcessing.TypeVector, createByDefault=False, defaultValue=None))
+
+    def processAlgorithm(self, parameters, context, model_feedback):
+        # Use a multi-step feedback, so that individual child algorithm progress reports are adjusted for the
+        # overall progress through the model
+        feedback = QgsProcessingMultiStepFeedback(7, model_feedback)
+        results = {}
+        outputs = {}
+
+        # RC_CLC_pc
+        alg_params = {
+            'DATA_TYPE': 2,  # UInt16
+            'INPUT_RASTER': 'CLC18_100m_ss2_cce9c9a9_5721_41d4_9037_80cae99d5307',
+            'NODATA_FOR_MISSING': False,
+            'NO_DATA': -9999,
+            'OUTPUT': '/scratch/galifra/Model/RC_CLC_pc.tif',
+            'RANGE_BOUNDARIES': 2,  # min <= value <= max
+            'RASTER_BAND': 1,
+            'TABLE': ['221','221','721','222','222','722','223','223','723'],
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['Rc_clc_pc'] = processing.run('native:reclassifybytable', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(1)
+        if feedback.isCanceled():
+            return {}
+
+        # Raster calculator resample of Reclas
+        alg_params = {
+            'CELLSIZE': 10,
+            'CRS': 'ProjectCrs',
+            'EXPRESSION': '"\'Reclassified raster\' from algorithm \'RC_CLC_pc\'@1"',
+            'EXTENT': '4177374.454900000,4286528.830400000,2356237.823500000,2438663.243700000 [EPSG:3035]',
+            'LAYERS': None,
+            'OUTPUT': '/scratch/galifra/Model/RS_RC_CLC_pc.tif',
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['RasterCalculatorResampleOfReclas'] = processing.run('qgis:rastercalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(2)
+        if feedback.isCanceled():
+            return {}
+
+        # RC_sensitive01
+        alg_params = {
+            'DATA_TYPE': 2,  # UInt16
+            'INPUT_RASTER': 'CLC18_ss_wrp_54361bbb_a059_4553_9b87_c1dc4f058d0b',
+            'NODATA_FOR_MISSING': False,
+            'NO_DATA': -9999,
+            'OUTPUT': '/scratch/galifra/Model/RC_CLCbb_sensArea_01.tif',
+            'RANGE_BOUNDARIES': 2,  # min <= value <= max
+            'RASTER_BAND': 1,
+            'TABLE': ['1','1','1','2','900','0'],
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['Rc_sensitive01'] = processing.run('native:reclassifybytable', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(3)
+        if feedback.isCanceled():
+            return {}
+
+        # Eucropmap_CLCpc
+        alg_params = {
+            'CELLSIZE': 0,
+            'CRS': 'ProjectCrs',
+            'EXPRESSION': 'if(\n(\n"RS_RC_CLCmanual@1" = 721 OR \n"RS_RC_CLCmanual@1" = 722 OR \n"RS_RC_CLCmanual@1" = 723\n), \n"RS_RC_CLCmanual@1", \n"European Crop Map 2018@1")',
+            'EXTENT': '4177374.454900000,4286528.830400000,2356237.823500000,2438663.243700000 [EPSG:3035]',
+            'LAYERS': ['/eos/jeodpp/home/users/galifra/data/Buffer/CLC18_100m_ss2.tif'],
+            'OUTPUT': '/scratch/galifra/Model/EUCropMap18_CLCcp_ss.tif',
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['Eucropmap_clcpc'] = processing.run('qgis:rastercalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(4)
+        if feedback.isCanceled():
+            return {}
+
+        # BufferCreation10
+        alg_params = {
+            '-z': True,
+            'GRASS_RASTER_FORMAT_META': '',
+            'GRASS_RASTER_FORMAT_OPT': '',
+            'GRASS_REGION_CELLSIZE_PARAMETER': 0,
+            'GRASS_REGION_PARAMETER': '4121956.859000000,4301645.255100000,2354214.751100000,2509650.386400000 [EPSG:3035]',
+            'distances': '10',
+            'input': outputs['Rc_sensitive01']['OUTPUT'],
+            'output': '/scratch/galifra/Model/Buf10m_sensArea.tif',
+            'units': 0,  # meters
+            'output': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['Buffercreation10'] = processing.run('grass7:r.buffer', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(5)
+        if feedback.isCanceled():
+            return {}
+
+        # buffer10m
+        alg_params = {
+            'CELLSIZE': 10,
+            'CRS': QgsCoordinateReferenceSystem('EPSG:3035'),
+            'EXPRESSION': 'if("\'Buffer\' from algorithm \'BufferCreation10\'@1"= 2,(("\'Output\' from algorithm \'Eucropmap_CLCpc\'@1") * ("\'Buffer\' from algorithm \'BufferCreation10\'@1" / 2)),0)',
+            'EXTENT': '4177370.000000000,4286530.000000000,2356240.000000000,2438660.000000000 [EPSG:3035]',
+            'LAYERS': ['/eos/jeodpp/home/users/galifra/data/Buffer/EuCropMap18_10m_ss.tif'],
+            'OUTPUT': '/scratch/galifra/Model/EUCropMap+CLCpc_ss_10mBuf.tif',
+            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
+        }
+        outputs['Buffer10m'] = processing.run('qgis:rastercalculator', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+
+        feedback.setCurrentStep(6)
+        if feedback.isCanceled():
+            return {}
+
+        # Reports
+        alg_params = {
+            'BAND': 1,
+            'INPUT': outputs['Buffer10m']['OUTPUT'],
+            'OUTPUT_HTML_FILE': parameters['Buf10stats'],
+            'OUTPUT_TABLE': parameters['Buf10statscsv']
+        }
+        outputs['Reports'] = processing.run('native:rasterlayeruniquevaluesreport', alg_params, context=context, feedback=feedback, is_child_algorithm=True)
+        results['Buf10stats'] = outputs['Reports']['OUTPUT_HTML_FILE']
+        results['Buf10statscsv'] = outputs['Reports']['OUTPUT_TABLE']
+        return results
+
+    def name(self):
+        return 'EnrichEUCropMap'
+
+    def displayName(self):
+        return 'EnrichEUCropMap'
+
+    def group(self):
+        return ''
+
+    def groupId(self):
+        return ''
+
+    def createInstance(self):
+        return Enricheucropmap()
