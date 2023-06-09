@@ -1,0 +1,52 @@
+DRAFT: Impact of the pesticide ban near urban areas in the European Union 
+
+Introduction 
+The current EU policies prevent the authorisation of active substances and the use of plant protection products that could pose a harm to people living in the vicinity of sprayed crops. 
+Due to this proximity, the concerned people might get exposed to higher levels of pesticides compared to those living farther away. 
+This is because during and after spraying the pesticides contaminate the air in the vicinity due to air drift, 
+volatisation and distribution of contaminated fine dust particles from crops (Ravier et al. 2005). 
+This leads to exposures from air and indoor dust and via contact from deposits on lawns. Apart from private properties, 
+studies from agricultural areas with intensive pesticide use show contamination of public spaces, including playgrounds and schools (Linhart et al 2021). 
+
+While this exposure is considered not to pose any risks, the general public perception is to ensure higher protection and a transition towards zero exposure, all the more, 
+if measures in such direction are easily implementable and economically non-damaging. 
+The Commission is determined to reduce the risks from pesticide use and in that regard has proposed a regulation on the Sustainable use of pesticides (SUR) introducing, 
+among others, a general ban on pesticide use in and near sensitive areas, including urban areas. 
+Such ban is not new as some European countries have already introduced similar measures. 
+While SUR proposes a minimum 3-metre pesticide-free zone from the urban area, in France this zone varies between 3 and 20 metres depending on the crop type and pesticide use. 
+A debate on the width of these zones and whether they are sufficient has spurred a study to estimate the agricultural area concerned and the resulting impact. 
+The study showed that 29% of total agricultural area in France is within 150 metres from urban areas, with only 0.2% being within 10 metres (Guilpart et al. 2022). 
+Moreover, half of that area is likely not sprayed with pesticides further diluting the impact of the ban. 
+
+Given the current insecurity of the food sector, any ban in pesticide use is perceived as a thread to Europe’s food independence and the viability of the agricultural sector. 
+That is why legislators request more evidence regarding the impact of such a ban. 
+While the results from France indicate a relatively low impact, their results cannot be easily extrapolated to the whole EU without disregarding the variety of agricultural practices of each member state. 
+Inspired by the French, here we present a study expanded to the whole EU by combining available EU data on urban settlements and crops. 
+This study estimates the area impacted by the ban, provides statistics on the affected crops and analysis of the relative yield loss. 
+
+Materials and Methods  
+EU Crop Map 2018: The EU Crop Map 2018 is a product developed by the Joint Research Centre (JRC), providing a detailed mapping of crop types at the parcel level for the entire European Union (EU). 
+It consists of 24 classes, including 19 agricultural crops and other coverage classes such as artificial land, grassland, and bare soil. The map has a pixel resolution of 10x10 meters.
+
+Corine Land Cover (CLC) 2018: CLC2018 is the fifth inventory of the Copernicus Earth Observation programme, coordinated by the European Environmental Agency (EEA). 
+It offers land coverage descriptions and interpretations based on satellite observations of the Earth's surface. CLC2018 consists of 44 coverage classes and has a pixel resolution of 100x100 meters.
+
+Corine Land Cover Backbone (CLC+): As part of the Copernicus Land Monitoring Service (CLMS), the EEA has developed the CLC+ system to enhance European Land Cover/Land Use (LC/LU) monitoring and reporting. 
+It complements existing CLMS products, such as CLC, to meet evolving requirements. CLC+ includes 11 generic classes and provides a spatial resolution of 10 meters.
+
+The objective is to integrate these three layers to gain a comprehensive understanding of land distribution and characteristics in proximity to sensitive areas. 
+The goal is to quantify the potential agricultural areas where pesticide application may pose risks to human health, leading to an assessment of pesticide bans at different buffer distances from sensitive areas. 
+
+The conceptual model is straightforward, but the challenge lies in the computational analysis involving the entire EU territory at a highly detailed scale (10x10 meter resolution). 
+The following steps are involved: 
+1.	Warp layers: First step is to re-project all the layers within the same reference coordinate system.
+2.	Enrichment of the EU Crop Map: Merge information from CLC 2018 with the EU Crop Map 2018, primarily focusing on permanent crops like vineyards, olive groves, fruit trees, and berry plantations. 
+3.	Buffer analysis from sensitive areas: Utilize artificial surfaces reported in CLC and CLC+ to develop buffer zones around sensitive areas. 
+4.	Reclassification: Reclassify vineyards, olives, and permanent fruit classes from CLC to values that do not conflict with existing classes in the EU Crop Map 
+(e.g., assigning a different code to CLC vineyards than the code used for potatoes in the EU Crop Map). 
+5.	Resampling: Adjust the spatial resolution of reclassified CLC2018 to match the resolution of the EU Crop Map (10-meter cells). 
+6.	Layer Injection: Overlay and hide the original values of the EU Crop Map by injecting the resampled and reclassified CLC2018 classes into it using raster calculations. 
+7.	Buffer analysis: Select four appropriate buffer distances (10 meters, 50 meters, 100 meters, and 150 meters) from sensitive areas. 
+Artificial surfaces from CLC+ at a 10-meter resolution are considered as reference classes for sensitive areas. 
+8.	Raster unique values report: Analyse the intersected areas between the four buffer distances and the enriched EU Crop Map to determine the unique values. 
+
