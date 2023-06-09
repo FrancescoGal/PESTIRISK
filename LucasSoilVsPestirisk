@@ -1,0 +1,145 @@
+#library(RPostgreSQL)
+library(sf)
+library(tidyverse)
+library(tmap)
+library(spData)
+data(World)
+
+setwd("/eos/jeodpp/home/users/galifra/data/")
+LPPR <- read.csv("LUCASpntVsPestirisk.csv", sep=",", header=T)
+head(LPPR)
+LPPR <- LPPR %>% 
+  mutate(OrCrop = str_sub(PC_crop, -3, -1))
+
+str(LPPR)
+
+
+uPar <- unique(LPPR$Parameter)
+uSoil <- unique(LPPR$soil_ID)
+
+LPPR1 <- LPPR
+LPPR1$Value[LPPR1$Value==0] <- NA
+
+View(LPPR1v0)
+
+
+LPPR1v0 <- LPPR1 %>% 
+  filter(!is.na(Value))
+
+ggplot(LPPR1v0, aes(x = Value, y = Parameter, color = OrCrop)) +
+  geom_point(size=3) +
+  labs(x = "Residue Value", y = "Pesticide Active Substance", color = "Crops") +
+  ggtitle("Comparison of Residue Values between Lucas Soil and Pestirisk") +
+  theme_minimal()+
+  facet_grid(. ~Source, scales = "free_y")
+
+ggplot(LPPR1v0, aes(x = Value, y = OrCrop, color = Parameter)) +
+  geom_point(size=3) +
+  labs(x = "Residue Value", color = "Pesticide Active Substance", y = "Crops") +
+  ggtitle("Comparison of Residue Values between Lucas Soil and Pestirisk") +
+  theme_minimal()+
+  facet_grid(. ~Source, scales = "free_y")
+
+
+# Scatter plot Lucas vs PESTIRISK per crop and single AS
+LPPR1pvt <- pivot_wider(LPPR1v0,
+                       id_cols=c("Parameter", "OrCrop"),
+                       names_from=c("Source"),
+                       values_from = "Value",
+                       values_fn = mean)
+
+LPPR1pvt0 <-LPPR1pvt %>% 
+  drop_na() 
+
+#LPPR1pvt1 <- LPPR1pvt0 %>% 
+#  group_by(Parameter) %>% 
+#  summarize()
+
+LPPR1pvt1 <- LPPR1pvt0 %>% 
+  filter(Parameter=="Chlorpyrifos")
+
+ggplot(LPPR1pvt1, aes(x = LucasSoil, y = Pestirisk, color = OrCrop)) +
+  geom_point(size=3) +
+  labs(x = "Lucas Soil Residues", y = "Pestirisk soil residues", color = "Crops") +
+  ggtitle("Comparison of Residue Values between Lucas Soil and Pestirisk") +
+  theme_minimal()
+
+#2 ############# Approach
+LPPR2pvt <- pivot_wider(LPPR1v0,
+                        id_cols=c("Parameter", "OrCrop", "soil_ID"),
+                        names_from=c("Source"),
+                        values_from = "Value",
+                        values_fn = mean)
+
+LPPR2pvt0 <-LPPR2pvt %>% 
+  drop_na() 
+
+#LPPR1pvt1 <- LPPR1pvt0 %>% 
+#  group_by(Parameter) %>% 
+#  summarize()
+
+LPPR2pvt1 <- LPPR2pvt0 %>% 
+  filter(Parameter=="Chlorpyrifos")
+
+ggplot(LPPR2pvt1, aes(x = LucasSoil, y = Pestirisk, color = Parameter)) +
+  geom_point(size=3) +
+  labs(x = "Lucas Soil Residues", y = "Pestirisk soil residues", color = "Crops") +
+  ggtitle("Comparison of Residue Values between Lucas Soil and Pestirisk") +
+  theme_minimal()
+
+ggplot(LPPR2pvt, aes(x = LucasSoil, y = Pestirisk, color = Parameter)) +
+  geom_point(size=3) +
+  labs(x = "Lucas Soil Residues", y = "Pestirisk soil residues", color = "Crops") +
+  ggtitle("Comparison of Residue Values between Lucas Soil and Pestirisk") +
+  theme_minimal()
+#####################
+
+LPPR1v1 <- LPPR1v0%>% 
+  group_by(Source, Parameter, OrCrop) %>% 
+  summarize(AveRes = mean(Value))
+
+#pivot to see how many data are in each crop group
+LPPR1v2 <- pivot_wider(LPPR1v1,
+                       id_cols=c("Parameter"),
+                       names_from=c("OrCrop"),
+                       values_from = "AveRes",
+                       values_fn = list(AveRes = length))
+View(LPPR1v2)
+
+ # "Carbendazim" Azoxystrobin" "Glyphosate" "Boscalid" "Chlorpyrifos" "Cyprodinil"
+
+LPPRcrop <- LPPR1v1 %>% 
+  filter(Parameter=="Chlorpyrifos") %>% 
+  group_by(Source, Parameter, OrCrop) %>% 
+  summarize(AveRes=mean(AveRes))
+head(LPPRcrop)
+view(LPPRcrop)
+
+ResCrop <- 
+  ggplot(LPPRcrop, aes(OrCrop, AveRes))+
+  geom_point()+
+  facet_wrap(Parameter~Source, ncol=1)
+ResCrop
+
+ResCrop <- ggplot(LPPRcrop, aes(x=OrCrop, y=AveRes, fill=OrCrop, group=Source)) +
+  geom_bar(stat="identity", position=position_dodge())+
+  theme_minimal()
+ResCrop
+
+
+LPPRcrop2 <- pivot_wider(LPPRcrop,
+                         id_cols="OrCrop",
+                         names_from="Parameter", 
+                         values_from = "AveRes",
+                         values_fn = list(AveRes = length)) %>% 
+  filter(Chlorpyrifos>1)
+LPPRcrop3 <- inner_join(LPPRcrop, LPPRcrop2, by="OrCrop") %>% 
+  filter(Chlorpyrifos>1) %>% 
+  rename(param=Chlorpyrifos)
+
+##keep into consideration only values that are bpoth present in LUCAS spoil and PESTIRISK
+ResCrop2 <- ggplot(LPPRcrop3, aes(x=interaction(Source,OrCrop), y=AveRes, fill=factor(OrCrop)))+
+  geom_bar(stat = "identity", position = position_dodge())+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+  #facet_wrap(Parameter~Source, ncol=1)
+ResCrop2
